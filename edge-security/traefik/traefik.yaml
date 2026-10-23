@@ -1,0 +1,83 @@
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+log:
+  level: INFO
+
+api:
+  dashboard: true
+  insecure: false
+
+entryPoints:
+  web:
+    address: ":80"
+    forwardedHeaders:
+      insecure: false
+      trustedIPs:
+        - "203.0.113.0/24"  # VPN network
+        - "172.21.0.0/16"   # frontend subnet
+        - "172.22.0.0/16"   # backend subnet
+
+  websecure:
+    address: ":443"
+    forwardedHeaders:
+      insecure: false
+      trustedIPs:
+        - "203.0.113.0/24"
+        - "172.21.0.0/16"
+        - "172.22.0.0/16"
+
+  metrics:
+    address: :8082
+
+  postgres:
+    address: :5432
+
+providers:
+  docker:
+    endpoint: "unix:///var/run/docker.sock"
+    watch: true
+    exposedByDefault: false
+  file:
+    directory: /etc/traefik/conf/
+    watch: true
+
+accessLog:
+  filePath: /var/log/traefik/access.log
+  format: json
+  bufferingSize: 0
+
+http:
+  middlewares:
+    https-redirectscheme:
+      redirectScheme:
+        scheme: https
+        permanent: true
+
+metrics:
+  prometheus:
+    entryPoint: metrics
+    addEntryPointsLabels: true
+    addServicesLabels: true
+
+# ACME/Let's Encrypt via ipv64 DNS challenge
+certificatesResolvers:
+  ipv64:
+    acme:
+      email: admin@example.com   # <- ADJUST
+      storage: "/letsencrypt/acme.json"
+      dnsChallenge:
+        provider: "ipv64"
+        # Delay before Traefik checks the TXT records (adjust if needed)
+        delayBeforeCheck: 0
+        # (optional) custom DNS resolvers for faster TXT checks
+        resolvers:
+          - "1.1.1.1:53"
+          - "8.8.8.8:53"
+
+experimental:
+  localPlugins:
+    bouncer:
+      moduleName: github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin
+#      version: v1.8.1

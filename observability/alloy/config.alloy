@@ -1,0 +1,170 @@
+// ========================== 
+// 1) DOCKER LOGS 
+// ========================== 
+discovery.docker "containers" { 
+  host             = "unix:///var/run/docker.sock" 
+  refresh_interval = "5s" 
+} 
+ 
+discovery.relabel "docker_logs" { 
+  targets = discovery.docker.containers.targets 
+ 
+  rule { 
+    target_label = "job" 
+    replacement  = "docker" 
+  } 
+ 
+  rule { 
+    target_label = "host" 
+    replacement  = constants.hostname 
+  } 
+ 
+  rule { 
+    action        = "replace" 
+    source_labels = ["__meta_docker_container_name"] 
+    regex         = "^/(.*)" 
+    replacement   = "$1" 
+    target_label  = "container" 
+  } 
+ 
+  rule { 
+    action        = "replace" 
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"] 
+    target_label  = "service" 
+  } 
+ 
+  rule { 
+    action        = "replace" 
+    source_labels = ["__meta_docker_container_image"] 
+    target_label  = "image" 
+  } 
+ 
+  rule { 
+    action        = "replace" 
+    source_labels = ["__meta_docker_container_log_stream"] 
+    target_label  = "stream" 
+  } 
+} 
+ 
+loki.source.docker "docker" { 
+  host       = "unix:///var/run/docker.sock" 
+  targets    = discovery.relabel.docker_logs.output 
+  forward_to = [loki.write.default.receiver] 
+} 
+
+// ========================== 
+// 2) SYSTEMD JOURNAL (SSH, SUDO, all system logs)
+// ========================== 
+loki.source.journal "journal" {
+  format_as_json = true
+  forward_to = [loki.process.journal.receiver]
+}
+
+loki.process "journal" {
+  // Extract important fields
+  stage.json {
+    expressions = {
+      message   = "MESSAGE",
+      unit      = "_SYSTEMD_UNIT",
+      priority  = "_PRIORITY",
+      hostname  = "_HOSTNAME",
+    }
+  }
+
+  stage.labels {
+    values = {
+      job      = "systemd",
+      host     = constants.hostname,
+      unit     = "unit",
+      priority = "priority",
+    }
+  }
+
+  stage.output {
+    source = "message"
+  }
+
+  forward_to = [loki.write.default.receiver]
+}
+
+// ========================== 
+// 3) BACKUP LOGFILES 
+// ========================== 
+/*
+loki.source.file "backup_docker" { 
+  targets = [ 
+    { 
+      __path__ = "/data/backup/ThinkCentre/log/*.log", 
+      app      = "backup", 
+      kind     = "docker-backup", 
+    }, 
+  ] 
+
+  forward_to = [loki.process.backup_docker.receiver] 
+
+  file_match { 
+    enabled     = true 
+    sync_period = "10s" 
+  } 
+
+  tail_from_end = true 
+} 
+
+loki.process "backup_docker" { 
+  forward_to = [loki.write.default.receiver] 
+
+  stage.json { 
+    expressions = { 
+      timestamp            = "timestamp", 
+      level                = "level", 
+      job                  = "job", 
+      host                 = "host", 
+      message              = "message", 
+      archive              = "archive", 
+      last_archive         = "last_archive", 
+      repo_state           = "repo_state", 
+      count                = "count", 
+      files_total          = "files_total", 
+      files_created        = "files_created", 
+      total_size           = "total_size", 
+      bytes_sent           = "bytes_sent", 
+      bytes_received       = "bytes_received", 
+      duration             = "duration", 
+      files                = "files", 
+      original_size        = "original_size", 
+      deduplicated_size    = "deduplicated_size", 
+      kept                 = "kept", 
+      pruned               = "pruned", 
+      containers_restarted = "containers_restarted", 
+      exit_code            = "exit_code", 
+    } 
+  } 
+
+  stage.timestamp { 
+    source = "timestamp" 
+    format = "RFC3339" 
+  } 
+
+  stage.labels { 
+    values = { 
+      app   = "app", 
+      kind  = "kind", 
+      job   = "job", 
+      host  = "host", 
+      level = "level", 
+    } 
+  } 
+
+  stage.output { 
+    source = "message" 
+  } 
+} 
+*/
+// ========================== 
+// 4) PUSH TO LOKI 
+// ========================== 
+loki.write "default" { 
+  endpoint { 
+    url = "http://loki:3100/loki/api/v1/push" 
+  } 
+}

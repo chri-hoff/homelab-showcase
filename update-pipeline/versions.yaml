@@ -1,0 +1,254 @@
+# AUTO-GENERATED from Supabase (public.services) -- do not edit by hand.
+# Change versions in Supabase Studio; the next check run commits this file.
+
+services:
+  adguard:
+    version: "v0.107.79"
+    image: "docker.io/adguard/adguardhome"
+    stack: "adguard"
+    last_updated: "2026-08-19"
+    updateable: true
+    breaking_changes: false
+    notes: ""
+
+  alloy:
+    version: "latest"
+    image: "grafana/alloy"
+    stack: "alloy"
+    last_updated: "2026-10-19"
+    updateable: true
+    breaking_changes: false
+    notes: "automatisch erkannt (Check-Lauf)"
+
+  authentik:
+    version: "2026.8.5"
+    image: "ghcr.io/goauthentik/server"
+    stack: "authentik"
+    last_updated: "2026-10-23"
+    updateable: true
+    breaking_changes: false
+    notes: ""
+
+  cadvisor:
+    version: "latest"
+    image: "gcr.io/cadvisor/cadvisor"
+    stack: "cadvisor"
+    last_updated: "2026-10-19"
+    updateable: true
+    breaking_changes: false
+    notes: "automatisch erkannt (Check-Lauf)"
+
+  collabora:
+    version: "26.04.5.1.1"
+    image: "collabora/code"
+    stack: "collabora"
+    last_updated: "2026-10-21"
+    updateable: true
+    breaking_changes: false
+    notes: "automatisch erkannt (Check-Lauf)"
+
+  duplicati:
+    version: "latest"
+    image: "duplicati/duplicati"
+    stack: "duplicati"
+    last_updated: "2026-10-19"
+    updateable: true
+    breaking_changes: false
+    notes: "automatisch erkannt (Check-Lauf)"
+
+  gitea:
+    version: "1.27.3"
+    image: "gitea/gitea"
+    stack: "gitea"
+    last_updated: "2026-09-03"
+    updateable: true
+    breaking_changes: false
+    notes: ""
+
+  grafana:
+    version: "13.2.4"
+    image: "grafana/grafana"
+    stack: "grafana"
+    last_updated: "2026-10-15"
+    updateable: true
+    breaking_changes: false
+    notes: "regular update"
+
+  kestra:
+    version: "v1.3.44"
+    image: "kestra/kestra"
+    stack: "kestra"
+    last_updated: "2026-10-21"
+    updateable: false
+    breaking_changes: false
+    notes: "regular update"
+
+  loki:
+    version: "3.7.9"
+    image: "grafana/loki"
+    stack: "loki"
+    last_updated: "2026-10-21"
+    updateable: true
+    breaking_changes: false
+    notes: "security update"
+
+  mariadb:
+    version: "11.8.9"
+    image: "mariadb"
+    stack: "mariadb"
+    last_updated: "2026-08-29"
+    updateable: true
+    breaking_changes: false
+    notes: ""
+
+  mindwtr:
+    version: "1.3.7"
+    image: "ghcr.io/dongdongbh/mindwtr-cloud"
+    stack: "mindwtr"
+    last_updated: "2026-10-23"
+    updateable: true
+    breaking_changes: false
+    notes: "regular update"
+
+  n8n:
+    version: "2.45.2"
+    image: "n8nio/n8n"
+    stack: "n8n"
+    last_updated: "2026-10-23"
+    updateable: true
+    breaking_changes: false
+    notes: "regular update"
+
+  nextcloud:
+    version: "34.0.5"
+    image: "nextcloud"
+    stack: "nextcloud"
+    last_updated: "2026-10-16"
+    updateable: true
+    breaking_changes: false
+    notes: "Security update"
+
+  postgres:
+    version: "17.11"
+    image: "docker.io/library/postgres"
+    stack: "postgres"
+    last_updated: "2026-08-14"
+    updateable: true
+    breaking_changes: false
+    notes: ""
+
+  prometheus:
+    version: "latest"
+    image: "prom/prometheus"
+    stack: "prometheus"
+    last_updated: "2026-10-19"
+    updateable: true
+    breaking_changes: false
+    notes: "automatisch erkannt (Check-Lauf)"
+
+  supabase-api-gw:
+    version: "v1.39.1"
+    image: "envoyproxy/envoy"
+    stack: "supabase"
+    bundle: "supabase"
+    last_updated: "2026-10-19"
+    updateable: false
+    breaking_changes: false
+    notes: "automatisch erkannt (Check-Lauf)"
+
+  supabase-auth:
+    version: "v2.196.0"
+    image: "supabase/gotrue"
+    stack: "supabase"
+    bundle: "supabase"
+    last_updated: "2026-10-19"
+    updateable: false
+    breaking_changes: false
+    notes: "automatisch erkannt (Check-Lauf)"
+
+  supabase-db:
+    version: "17.6.1.136"
+    image: "supabase/postgres"
+    stack: "supabase"
+    bundle: "supabase"
+    last_updated: "2026-10-19"
+    updateable: false
+    breaking_changes: false
+    notes: "automatisch erkannt (Check-Lauf)"
+
+  supabase-meta:
+    version: "v0.99.0"
+    image: "supabase/postgres-meta"
+    stack: "supabase"
+    bundle: "supabase"
+    last_updated: "2026-10-19"
+    updateable: false
+    breaking_changes: false
+    notes: "automatisch erkannt (Check-Lauf)"
+
+  supabase-realtime:
+    version: "v2.134.10"
+    image: "supabase/realtime"
+    stack: "supabase"
+    bundle: "supabase"
+    last_updated: "2026-10-19"
+    updateable: false
+    breaking_changes: false
+    notes: "automatisch erkannt (Check-Lauf)"
+
+  supabase-rest:
+    version: "v14.17"
+    image: "postgrest/postgrest"
+    stack: "supabase"
+    bundle: "supabase"
+    last_updated: "2026-10-19"
+    updateable: false
+    breaking_changes: false
+    notes: "automatisch erkannt (Check-Lauf)"
+
+  supabase-studio:
+    version: "2026.09.07-sha-7996410"
+    image: "supabase/studio"
+    stack: "supabase"
+    bundle: "supabase"
+    last_updated: "2026-10-19"
+    updateable: false
+    breaking_changes: false
+    notes: "automatisch erkannt (Check-Lauf)"
+
+  traefik:
+    version: "v3.7.16"
+    image: "traefik"
+    stack: "traefik"
+    last_updated: "2026-10-21"
+    updateable: false
+    breaking_changes: false
+    notes: ""
+
+  uptime-kuma:
+    version: "2.5.7"
+    image: "louislam/uptime-kuma"
+    stack: "uptime-kuma"
+    last_updated: "2026-10-23"
+    updateable: true
+    breaking_changes: false
+    notes: "regular update"
+
+  vault:
+    version: "2.2.1"
+    image: "hashicorp/vault"
+    stack: "vault"
+    last_updated: "2026-10-23"
+    updateable: false
+    breaking_changes: false
+    notes: "Security Update"
+
+  vaultwarden:
+    version: "1.37.4"
+    image: "vaultwarden/server"
+    stack: "vaultwarden"
+    last_updated: "2026-10-19"
+    updateable: true
+    breaking_changes: false
+    notes: "Änderung von latest auf fixed version 1.37.1"
+

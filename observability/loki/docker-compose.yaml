@@ -1,0 +1,37 @@
+services:
+  loki:
+    image: grafana/loki:${VERSION}
+    container_name: loki
+    env_file:
+      - loki.env
+    user: "10001:10001"
+
+    command: -config.file=/etc/loki/config.yaml
+    volumes:
+      - /opt/docker/loki/config/loki-config.yaml:/etc/loki/config.yaml:ro
+      - /data/loki:/loki
+
+    labels:
+      - traefik.enable=true
+
+      # Router
+      - traefik.http.routers.loki.rule=Host(`${TRAEFIK_HOST}`)
+      - traefik.http.routers.loki.entrypoints=websecure
+      - traefik.http.routers.loki.tls=true
+      - traefik.http.routers.loki.tls.certresolver=ipv64
+
+      # Service
+      - traefik.http.services.loki.loadbalancer.server.port=3100
+
+      # Basic auth
+      # IP allowlist first, so external clients never even reach basic auth
+      - traefik.http.routers.loki.middlewares=std-app-internal-chain@file,loki-auth
+      - traefik.http.middlewares.loki-auth.basicauth.users=${LOKI_BASIC_AUTH_USERS}
+
+    restart: unless-stopped
+    networks:
+      - frontend
+
+networks:
+  frontend:
+    external: true

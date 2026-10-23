@@ -1,0 +1,47 @@
+# Components pinned manually (not via a Docker registry) that should still be
+# checked for new releases by docker-update-check.sh.
+#
+# Deliberately NOT in config/versions.yaml: there, sops-auto-update.fish expects
+# an `image` field for every entry and a matching
+# services/<name>/docker-compose.yaml in order to deploy automatically on a
+# version bump. The things listed here are not Docker images (e.g. a Traefik
+# plugin pinned locally via "git checkout <tag>") -- a bump here is only a
+# notification, not an auto-deploy.
+#
+# Also deliberately NOT in services/traefik/config/traefik.yaml (the
+# "# version: ..." comment line there is just a note for humans):
+# services/*/config/ is entirely in .gitignore (see the header comment there)
+# and is therefore never versioned / never pulled to the server -- a script
+# reading the version from there would always report "file not readable" on
+# the server.
+#
+# --- How to: update an entry here ----------------------------------------
+# On every new release docker-update-check.sh reports "[UPDATE] <key>
+# <old> -> <new>" via Telegram. Then:
+#   1. Update the actual plugin on the host (example for
+#      traefik-crowdsec-bouncer, see also the main README.md section
+#      "IMPORTANT"):
+#        sudo git -C /opt/docker/traefik/plugins-local/src/github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin \
+#          fetch --tags
+#        sudo git -C /opt/docker/traefik/plugins-local/src/github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin \
+#          checkout <new-version>
+#        docker compose -f services/traefik/docker-compose.yaml restart traefik
+#        docker logs traefik --tail 50   # does the plugin load without errors?
+#   2. Set the `version:` field of the entry in this file to <new-version>
+#      and commit -- otherwise the next check reports "[UPDATE]" again even
+#      though it has already been updated.
+#   3. Optional: also update the reminder comment in
+#      services/traefik/config/traefik.yaml by hand (informational only, see
+#      above -- no script reads it anymore).
+# ---------------------------------------------------------------------------
+
+plugins:
+  traefik-crowdsec-bouncer:
+    version: "v1.8.1"
+    github_repo: "maxlerebourg/crowdsec-bouncer-traefik-plugin"
+    note: >-
+      Included locally in services/traefik/config/traefik.yaml as
+      experimental.localPlugins.bouncer (see the main README.md, section
+      "IMPORTANT"). On an update, change it here AND via
+      "git checkout <tag>" in the actual plugin directory on the host,
+      see the main README.md.

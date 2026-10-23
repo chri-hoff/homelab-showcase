@@ -1,0 +1,114 @@
+---
+include:
+  - /opt/docker/secrets/secrets.yaml
+
+services:
+  mindwtr-cloud:
+    image: ghcr.io/dongdongbh/mindwtr-cloud:${VERSION}
+    container_name: mindwtr-cloud
+    hostname: mindwtr-cloud
+    restart: unless-stopped
+
+    secrets:
+      - mindwtr_vault_role_id
+      - mindwtr_vault_secret_id
+
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        echo "mindwtr-entrypoint: reading role/secret id" >&2
+        ROLE_ID=$$(cat /run/secrets/mindwtr_vault_role_id)
+        SECRET_ID=$$(cat /run/secrets/mindwtr_vault_secret_id)
+
+        echo "mindwtr-entrypoint: logging in to vault" >&2
+        LOGIN_HTTP_CODE=$$(curl -s -o /tmp/vault_login.json -w '%{http_code}' -X POST \
+          -d "{\"role_id\":\"$$ROLE_ID\",\"secret_id\":\"$$SECRET_ID\"}" \
+          http://vault:8200/v1/auth/approle/login)
+        if [ "$$LOGIN_HTTP_CODE" != "200" ]; then
+          echo "mindwtr-entrypoint: vault login failed, http_code=$$LOGIN_HTTP_CODE" >&2
+          cat /tmp/vault_login.json >&2
+          exit 1
+        fi
+        VAULT_TOKEN=$$(grep -o '"client_token":"[^"]*"' /tmp/vault_login.json | cut -d'"' -f4)
+
+        echo "mindwtr-entrypoint: reading secret from vault" >&2
+        SECRET_HTTP_CODE=$$(curl -s -o /tmp/vault_secret.json -w '%{http_code}' -H "X-Vault-Token: $$VAULT_TOKEN" \
+          http://vault:8200/v1/homelab/data/services/mindwtr)
+        if [ "$$SECRET_HTTP_CODE" != "200" ]; then
+          echo "mindwtr-entrypoint: vault secret read failed, http_code=$$SECRET_HTTP_CODE" >&2
+          cat /tmp/vault_secret.json >&2
+          exit 1
+        fi
+        export MINDWTR_CLOUD_AUTH_TOKENS=$$(grep -o '"cloud_auth_tokens":"[^"]*"' /tmp/vault_secret.json | cut -d'"' -f4)
+        rm -f /tmp/vault_login.json /tmp/vault_secret.json
+
+        if [ -z "$$MINDWTR_CLOUD_AUTH_TOKENS" ]; then
+          echo "mindwtr-entrypoint: MINDWTR_CLOUD_AUTH_TOKENS is empty after vault read, aborting" >&2
+          exit 1
+        fi
+
+        echo "mindwtr-entrypoint: starting mindwtr-cloud" >&2
+        exec /usr/local/bin/mindwtr-cloud-entrypoint "$$@"
+      - --
+
+    env_file:
+      - mindwtr.env
+
+    environment:
+      MINDWTR_CLOUD_CORS_ORIGIN: "https://${TRAEFIK_HOST}"
+
+    command:
+      - bun
+      - run
+      - --filter
+      - mindwtr-cloud
+      - start
+      - --
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8787"
+
+    healthcheck:
+      test: ["CMD-SHELL", "code=$$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8787/ready); [ \"$$code\" = 200 ] || { [ \"$$code\" = 404 ] && curl -fsS http://localhost:8787/health >/dev/null; }"]
+      interval: 1m30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+    volumes:
+      - /opt/docker/mindwtr/data:/app/cloud_data
+
+    networks:
+      - frontend
+      - backend
+
+    security_opt:
+      - no-new-privileges:true
+
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=frontend
+
+      # Enable CrowdSec
+      - crowdsec.enable=true
+      - crowdsec.labels.type=Mindwtr
+
+      # Service
+      - traefik.http.services.mindwtr.loadbalancer.server.port=8787
+
+      # Public access only for the sync API (mobile/desktop clients, own bearer token)
+      - traefik.http.routers.mindwtr-public.rule=Host("${TRAEFIK_HOST}")
+      - traefik.http.routers.mindwtr-public.entrypoints=websecure
+      - traefik.http.routers.mindwtr-public.tls=true
+      - traefik.http.routers.mindwtr-public.tls.certresolver=ipv64
+      - traefik.http.routers.mindwtr-public.priority=10
+      - traefik.http.routers.mindwtr-public.middlewares=mindwtr-public-chain@file
+
+networks:
+  frontend:
+    external: true
+  backend:
+    external: true

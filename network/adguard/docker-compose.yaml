@@ -1,0 +1,47 @@
+---
+services:
+  adguard:
+    image: docker.io/adguard/adguardhome:${VERSION:-latest}
+    restart: unless-stopped
+    container_name: adguard
+    env_file:
+      - adguard.env
+    networks:
+      frontend:
+      adguardhome_network:
+    ports:
+      - "443:443/udp"
+      - "53:53/tcp"
+      - "53:53/udp"
+      - "853:853/tcp"
+      - "5443:5443/tcp"
+      - "5443:5443/udp"
+    volumes:
+      - adguard_work:/opt/adguardhome/work
+      - adguard_conf:/opt/adguardhome/conf
+    cap_add:
+      - NET_ADMIN
+      - NET_BIND_SERVICE
+      - NET_RAW
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=frontend
+      - traefik.http.services.adguard.loadBalancer.server.port=80
+      - traefik.http.routers.adguard_https.middlewares=std-app-internal-chain@file
+      - traefik.http.routers.adguard_https.service=adguard
+      - traefik.http.routers.adguard_https.rule=Host(`${TRAEFIK_HOST}`)
+      - traefik.http.routers.adguard_https.entrypoints=websecure
+      - traefik.http.routers.adguard_https.tls=true
+      - traefik.http.routers.adguard_https.tls.certresolver=ipv64
+
+networks:
+  adguardhome_network:
+    external: true
+  frontend:
+    external: true
+
+volumes:
+  adguard_work:
+    driver: local
+  adguard_conf:
+    driver: local

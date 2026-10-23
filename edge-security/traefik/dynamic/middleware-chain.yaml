@@ -1,0 +1,123 @@
+http:
+  middlewares:
+    std-app-internal-chain:
+      chain:
+        middlewares:
+          - only-internal
+
+    std-adm-internal-chain:
+      chain:
+        middlewares:
+          - only-trusted
+          - authentik
+
+    std-iot-chain:
+      chain:
+        middlewares:
+          - only-iot
+
+    authentik-public-chain:
+      chain:
+        middlewares:
+          - only-internal
+          - secure-headers
+          - authentik-ratelimit
+          - crowdsec
+
+    vaultwarden-public-chain:
+      chain:
+        middlewares:
+          - secure-headers
+          - vaultwarden-ratelimit
+          - crowdsec
+
+    vaultwarden-admin-chain:
+      chain:
+        middlewares:
+          - only-trusted
+          - secure-headers
+          - vaultwarden-admin-ratelimit
+          - crowdsec
+
+    nextcloud-chain:
+      chain:
+        middlewares:
+          - secure-headers-nextcloud
+          - crowdsec
+
+    cadvisor-chain:
+      chain:
+        middlewares:
+          - only-internal
+
+    vault-chain:
+      chain:
+        middlewares:
+          - only-trusted
+
+    grafana-chain:
+      chain:
+        middlewares:
+          - only-internal
+          - secure-headers
+          - crowdsec
+
+    uptime-kuma-chain:
+      chain:
+        middlewares:
+          - secure-headers
+          - only-trusted
+          - authentik
+          - crowdsec
+
+    uptime-kuma-status-chain:
+      chain:
+        middlewares:
+          - secure-headers
+          - only-internal
+          - crowdsec
+
+    influxdb-chain:
+      chain:
+        middlewares:
+          - only-trusted
+          - secure-headers
+          - crowdsec
+
+    emqx-chain:
+      chain:
+        middlewares:
+          - only-internal
+          - secure-headers
+          - crowdsec
+
+    n8n-webhook-chain:
+      chain:
+        middlewares:
+          - only-telegram
+          - secure-headers
+          - n8n-webhook-ratelimit
+          - crowdsec
+
+    mindwtr-public-chain:
+      chain:
+        middlewares:
+#          - only-trusted
+          - secure-headers
+          - mindwtr-ratelimit
+          - crowdsec
+
+    supabase-chain:
+      chain:
+        middlewares:
+          - secure-headers
+          - only-trusted
+#          - authentik
+          - crowdsec
+
+    collabora-chain:
+      chain:
+        middlewares:
+          - secure-headers-collabora
+          - collabora-ratelimit
+          - crowdsec

@@ -1,0 +1,21 @@
+id: mindwtr-fetch
+namespace: homelab
+
+tasks:
+  - id: fetch-tasks
+    type: io.kestra.plugin.scripts.shell.Commands
+    taskRunner:
+      type: io.kestra.plugin.scripts.runner.docker.Docker
+      image: alpine:latest
+      pullPolicy: IF_NOT_PRESENT
+      networkMode: backend
+    timeout: PT1M
+    env:
+      MINDWTR_TOKEN: "{{ secret('MINDWTR_TOKEN') }}"
+    commands:
+      - |
+        set -e
+        apk add --no-cache curl jq >/dev/null
+        RESPONSE=$(curl -sf -H "Authorization: Bearer $MINDWTR_TOKEN" \
+          "http://mindwtr-cloud:8787/v1/tasks")
+        echo "$RESPONSE" | jq .

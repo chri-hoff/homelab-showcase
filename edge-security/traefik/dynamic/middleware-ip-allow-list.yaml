@@ -1,0 +1,42 @@
+http:
+  middlewares:
+    only-internal:
+      ipAllowList:
+        sourceRange:
+          - 192.0.2.0/24      # home network
+          - 198.51.100.0/24        # IoT network
+          - 203.0.113.0/24      # VPN Range
+          - 172.21.0.0/16       # Docker Frontend
+          - 172.22.0.0/16       # Docker Backend
+          # - 2001:db8:1234::/48  # IPv6 example
+
+    # only-trusted: trusted/restricted networks (VPN, the host itself, Docker networks).
+    only-trusted:
+      ipAllowList:
+        sourceRange:
+          - 203.0.113.0/24      # VPN Range
+          - 198.51.100.10/32
+          - 172.21.0.0/16       # Docker Frontend
+          - 172.22.0.0/16       # Docker Backend
+
+
+    only-iot:
+      ipAllowList:
+        sourceRange:
+          - 198.51.100.0/24
+
+    grafana:
+      ipAllowList:
+        sourceRange:
+          - 198.51.100.6/32
+
+    only-telegram:
+      ipAllowList:
+        sourceRange:
+          # Telegram webhook source IPs, https://core.telegram.org/bots/webhooks
+          # ("Accepts incoming POSTs from subnets 149.154.160.0/20 and
+          # 91.108.4.0/22") -- according to the Telegram docs these ranges may
+          # change, double-check there when in doubt.
+          - 203.0.113.3 
+          - 149.154.160.0/20
+          - 91.108.4.0/22

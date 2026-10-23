@@ -1,0 +1,74 @@
+include:
+  - /opt/docker/secrets/secrets.yaml
+services:
+  vault-agent:
+    image: homelab-update-runner:latest
+    container_name: mariadb-vault-agent
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        ROLE_ID=$$(cat /run/secrets/mariadb_vault_role_id)
+        SECRET_ID=$$(cat /run/secrets/mariadb_vault_secret_id)
+        LOGIN_RESPONSE=$$(curl -sf -X POST \
+          -d "{\"role_id\":\"$$ROLE_ID\",\"secret_id\":\"$$SECRET_ID\"}" \
+          http://vault:8200/v1/auth/approle/login)
+        VAULT_TOKEN=$$(echo "$$LOGIN_RESPONSE" | jq -r '.auth.client_token')
+
+        SECRET_RESPONSE=$$(curl -sf -H "X-Vault-Token: $$VAULT_TOKEN" \
+          http://vault:8200/v1/homelab/data/databases/mariadb)
+
+        echo "$$SECRET_RESPONSE" | jq -r '.data.data.root_password' > /vault-secrets/root_password.txt
+        echo "$$SECRET_RESPONSE" | jq -r '.data.data.nextcloud_password' > /vault-secrets/nextcloud_password.txt
+        chmod 600 /vault-secrets/root_password.txt /vault-secrets/nextcloud_password.txt
+    secrets:
+      - mariadb_vault_role_id
+      - mariadb_vault_secret_id
+    volumes:
+      - mariadb-vault-secrets:/vault-secrets
+    networks:
+      - backend
+    restart: "no"
+
+  mariadb:
+    image: mariadb:${VERSION}
+    container_name: mariadb
+    depends_on:
+      vault-agent:
+        condition: service_completed_successfully
+    env_file:
+      - mariadb.env
+    restart: unless-stopped
+    environment:
+      # The official image accepts either MYSQL_* or MARIADB_*; using MARIADB_* here
+      MARIADB_ROOT_PASSWORD_FILE: /vault-secrets/root_password.txt
+      TZ: Europe/Berlin
+    volumes:
+      - /data/docker-share:/mnt/share
+      - /opt/docker/mariadb/data:/var/lib/mysql                           # persistent data
+      - /opt/docker/mariadb/initdb:/docker-entrypoint-initdb.d:ro         # *.sql run on first start
+      - /opt/docker/mariadb/config/my.cnf:/etc/mysql/conf.d/custom.cnf:ro # custom MariaDB config
+      - mariadb-vault-secrets:/vault-secrets:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    # mem_limit instead of deploy.resources: deploy.resources is not enforced without Swarm
+    mem_limit: 2g
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - backend   # keep DB private on backend network
+
+volumes:
+  mariadb-vault-secrets:
+
+networks:
+  backend:
+    external: true

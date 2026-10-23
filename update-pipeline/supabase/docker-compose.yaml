@@ -1,0 +1,402 @@
+---
+# Supabase (self-hosted) -- stack for Issue #72.
+#
+# Derived from the official self-hosting stack (github.com/supabase/supabase, docker/),
+# as of commit ff80bb14991e68667c04f74248b954e8babe6fde (2026-09-30). Image tags 1:1 from there.
+# volumes/api/envoy/* and volumes/db/*.sql are unmodified copies from the same commit.
+#
+# Deliberately reduced to: db, meta, studio, auth, rest, realtime, api-gw (Envoy).
+# Left out: storage/imgproxy, functions, analytics/vector, supavisor -- the Envoy routes
+# /storage/v1 and /functions/v1 therefore answer with 503 (Envoy still starts,
+# STRICT_DNS clusters count as initialized even when resolution fails).
+#
+# Secrets: vault-agent fetches everything from homelab/databases/supabase and writes one
+# <service>.env per service into the volume supabase-vault-secrets. Each container sources
+# its file in the entrypoint and then starts the image's original entrypoint. Exception:
+# PostgREST (image without a shell) reads db-uri/jwt-secret natively via "@file".
+include:
+  - /opt/docker/secrets/secrets.yaml
+services:
+  vault-agent:
+    image: homelab-update-runner:latest
+    container_name: supabase-vault-agent
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        ROLE_ID=$$(cat /run/secrets/supabase_vault_role_id)
+        SECRET_ID=$$(cat /run/secrets/supabase_vault_secret_id)
+        LOGIN_RESPONSE=$$(curl -sf -X POST \
+          -d "{\"role_id\":\"$$ROLE_ID\",\"secret_id\":\"$$SECRET_ID\"}" \
+          http://vault:8200/v1/auth/approle/login)
+        VAULT_TOKEN=$$(echo "$$LOGIN_RESPONSE" | jq -r '.auth.client_token')
+
+        SECRET_RESPONSE=$$(curl -sf -H "X-Vault-Token: $$VAULT_TOKEN" \
+          http://vault:8200/v1/homelab/data/databases/supabase)
+
+        # Aborts if a key is missing/empty or contains a ' (that would break sourcing)
+        get() {
+          v=$$(echo "$$SECRET_RESPONSE" | jq -r --arg k "$$1" '.data.data[$$k] // empty')
+          if [ -z "$$v" ]; then
+            echo "FEHLER: Key '$$1' fehlt oder ist leer in homelab/databases/supabase" >&2
+            exit 1
+          fi
+          case "$$v" in *"'"*)
+            echo "FEHLER: Key '$$1' enthaelt ein einfaches Anfuehrungszeichen" >&2
+            exit 1;;
+          esac
+          printf '%s' "$$v"
+        }
+        PG_PW=$$(get postgres_password)
+        JWT=$$(get jwt_secret)
+        ANON=$$(get anon_key)
+        SERVICE=$$(get service_role_key)
+        DASH_PW=$$(get dashboard_password)
+        SKB=$$(get secret_key_base)
+        RT_ENC=$$(get realtime_db_enc_key)
+        META_KEY=$$(get pg_meta_crypto_key)
+
+        # write <file> NAME VALUE [NAME VALUE ...]
+        write() {
+          f=/vault-secrets/$$1.env; shift
+          : > "$$f"
+          while [ $$# -gt 0 ]; do
+            printf "%s='%s'\n" "$$1" "$$2" >> "$$f"
+            shift 2
+          done
+        }
+        write db       POSTGRES_PASSWORD "$$PG_PW" PGPASSWORD "$$PG_PW"
+        write meta     PG_META_DB_PASSWORD "$$PG_PW" CRYPTO_KEY "$$META_KEY"
+        write studio   POSTGRES_PASSWORD "$$PG_PW" PG_META_CRYPTO_KEY "$$META_KEY" \
+                       SUPABASE_ANON_KEY "$$ANON" SUPABASE_SERVICE_KEY "$$SERVICE" AUTH_JWT_SECRET "$$JWT"
+        write auth     GOTRUE_DB_DATABASE_URL "postgres://supabase_auth_admin:$$PG_PW@db:5432/postgres" \
+                       GOTRUE_JWT_SECRET "$$JWT"
+        write realtime DB_PASSWORD "$$PG_PW" API_JWT_SECRET "$$JWT" METRICS_JWT_SECRET "$$JWT" \
+                       SECRET_KEY_BASE "$$SKB" DB_ENC_KEY "$$RT_ENC" ANON_KEY "$$ANON"
+        write api-gw   ANON_KEY "$$ANON" SERVICE_ROLE_KEY "$$SERVICE" DASHBOARD_PASSWORD "$$DASH_PW"
+        printf '%s' "postgres://authenticator:$$PG_PW@db:5432/postgres" > /vault-secrets/rest_db_uri
+        printf '%s' "$$JWT" > /vault-secrets/rest_jwt_secret
+
+        # 644: auth (user "supabase") and rest (UID 1000) run as non-root. The volume
+        # is only attached within this stack, and every container here holds
+        # postgres_password or jwt_secret anyway -- per-service separation would gain nothing.
+        chmod 644 /vault-secrets/*
+        echo "Supabase-Secrets geschrieben: $$(ls /vault-secrets | tr '\n' ' ')"
+    secrets:
+      - supabase_vault_role_id
+      - supabase_vault_secret_id
+    volumes:
+      - supabase-vault-secrets:/vault-secrets
+    networks:
+      - backend
+    restart: "no"
+
+  db:
+    container_name: supabase-db
+    image: supabase/postgres:17.6.1.136
+    restart: unless-stopped
+    mem_limit: 1g
+    cpus: "1.0"
+    depends_on:
+      vault-agent:
+        condition: service_completed_successfully
+    entrypoint:
+      - /bin/sh
+      - -c
+      - set -a; . /vault-secrets/db.env; set +a; exec docker-entrypoint.sh "$$@"
+      - --
+    command:
+      [
+        "postgres",
+        "-c",
+        "config_file=/etc/postgresql/postgresql.conf",
+        "-c",
+        "log_min_messages=fatal" # keeps Realtime polling queries from flooding the logs
+      ]
+    volumes:
+      - ./volumes/db/realtime.sql:/docker-entrypoint-initdb.d/migrations/99-realtime.sql
+      # superuser needed for event triggers
+      - ./volumes/db/webhooks.sql:/docker-entrypoint-initdb.d/init-scripts/98-webhooks.sql
+      # superuser needed for reserved roles
+      - ./volumes/db/roles.sql:/docker-entrypoint-initdb.d/init-scripts/99-roles.sql
+      - ./volumes/db/jwt.sql:/docker-entrypoint-initdb.d/init-scripts/99-jwt.sql
+      # _supabase/logs/pooler: only needed for analytics/Supavisor, kept for enabling later
+      - ./volumes/db/_supabase.sql:/docker-entrypoint-initdb.d/migrations/97-_supabase.sql
+      - ./volumes/db/logs.sql:/docker-entrypoint-initdb.d/migrations/99-logs.sql
+      - ./volumes/db/pooler.sql:/docker-entrypoint-initdb.d/migrations/99-pooler.sql
+      - /opt/docker/supabase/db/data:/var/lib/postgresql/data
+      # pgsodium key must survive restarts
+      - db-config:/etc/postgresql-custom
+      - supabase-vault-secrets:/vault-secrets:ro
+    healthcheck:
+      test: [ "CMD", "pg_isready", "-U", "postgres", "-h", "localhost" ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - default
+      # Database webhooks (pg_net) -> Kestra; deliberately not on backend, so the DB
+      # can only reach Kestra and not Vault & co.
+      - supabase-hooks
+    environment:
+      TZ: Europe/Berlin
+      POSTGRES_HOST: /var/run/postgresql
+      PGPORT: 5432
+      POSTGRES_PORT: 5432
+      PGDATABASE: postgres
+      POSTGRES_DB: postgres
+      JWT_EXP: ${JWT_EXPIRY:-3600}
+
+  meta:
+    container_name: supabase-meta
+    image: supabase/postgres-meta:v0.99.0
+    restart: unless-stopped
+    mem_limit: 256m
+    cpus: "0.5"
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - set -a; . /vault-secrets/meta.env; set +a; exec docker-entrypoint.sh "$$@"
+      - --
+    command: [ "node", "dist/server/server.js" ]
+    volumes:
+      - supabase-vault-secrets:/vault-secrets:ro
+    environment:
+      PG_META_PORT: 8080
+      PG_META_DB_HOST: db
+      PG_META_DB_PORT: 5432
+      PG_META_DB_NAME: postgres
+      PG_META_DB_USER: postgres
+
+  studio:
+    container_name: supabase-studio
+    image: supabase/studio:2026.09.07-sha-7996410
+    restart: unless-stopped
+    mem_limit: 768m
+    cpus: "1.0"
+    depends_on:
+      meta:
+        condition: service_started
+    entrypoint:
+      - /bin/sh
+      - -c
+      - set -a; . /vault-secrets/studio.env; set +a; exec docker-entrypoint.sh "$$@"
+      - --
+    command: [ "node", "apps/studio/server.js" ]
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://localhost:3000/api/platform/profile').then((r) => {if (r.status !== 200) throw new Error(r.status)})\""
+        ]
+      timeout: 10s
+      interval: 5s
+      retries: 3
+      start_period: 20s
+    volumes:
+      - /opt/docker/supabase/snippets:/app/snippets
+      - supabase-vault-secrets:/vault-secrets:ro
+    environment:
+      HOSTNAME: "0.0.0.0"
+      STUDIO_PG_META_URL: http://meta:8080
+      POSTGRES_PORT: 5432
+      POSTGRES_HOST: db
+      POSTGRES_DB: postgres
+      # See https://supabase.com/docs/guides/self-hosting/remove-superuser-access
+      POSTGRES_USER_READ_WRITE: postgres
+      PGRST_DB_SCHEMAS: ${PGRST_DB_SCHEMAS:-public,graphql_public}
+      PGRST_DB_MAX_ROWS: 1000
+      PGRST_DB_EXTRA_SEARCH_PATH: public
+      DEFAULT_ORGANIZATION_NAME: Homelab
+      DEFAULT_PROJECT_NAME: Homelab
+      SUPABASE_URL: http://api-gw:8000
+      SUPABASE_PUBLIC_URL: https://${TRAEFIK_HOST}
+      ENABLED_FEATURES_LOGS_ALL: "false"
+      SNIPPETS_MANAGEMENT_FOLDER: /app/snippets
+
+  auth:
+    container_name: supabase-auth
+    image: supabase/gotrue:v2.196.0
+    restart: unless-stopped
+    mem_limit: 128m
+    cpus: "0.5"
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - set -a; . /vault-secrets/auth.env; set +a; exec "$$@"
+      - --
+    command: [ "auth" ]
+    healthcheck:
+      test: [ "CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9999/health" ]
+      timeout: 5s
+      interval: 5s
+      retries: 3
+    volumes:
+      - supabase-vault-secrets:/vault-secrets:ro
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: 9999
+      API_EXTERNAL_URL: https://${TRAEFIK_HOST}/auth/v1
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_SITE_URL: https://${TRAEFIK_HOST}
+      GOTRUE_URI_ALLOW_LIST: ""
+      # No SMTP: no public sign-up, users are only created via Studio
+      GOTRUE_DISABLE_SIGNUP: "true"
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+      GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED: "false"
+      GOTRUE_EXTERNAL_PHONE_ENABLED: "false"
+      GOTRUE_SMS_AUTOCONFIRM: "false"
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_JWT_EXP: ${JWT_EXPIRY:-3600}
+      GOTRUE_JWT_ISSUER: https://${TRAEFIK_HOST}/auth/v1
+
+  rest:
+    container_name: supabase-rest
+    image: postgrest/postgrest:v14.17
+    restart: unless-stopped
+    mem_limit: 128m
+    cpus: "0.5"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD", "postgrest", "--ready" ]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+    volumes:
+      - supabase-vault-secrets:/vault-secrets:ro
+    environment:
+      # Image has no shell -> PostgREST reads both values from a file itself ("@path")
+      PGRST_DB_URI: "@/vault-secrets/rest_db_uri"
+      PGRST_JWT_SECRET: "@/vault-secrets/rest_jwt_secret"
+      PGRST_DB_SCHEMAS: ${PGRST_DB_SCHEMAS:-public,graphql_public}
+      PGRST_DB_MAX_ROWS: 1000
+      PGRST_DB_EXTRA_SEARCH_PATH: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_ADMIN_SERVER_PORT: 3001
+      PGRST_ADMIN_SERVER_HOST: localhost
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+      PGRST_APP_SETTINGS_JWT_EXP: ${JWT_EXPIRY:-3600}
+    command: [ "postgrest" ]
+
+  realtime:
+    # Name looks inconsistent but is required: Realtime derives the tenant ID from the subdomain
+    container_name: realtime-dev.supabase-realtime
+    image: supabase/realtime:v2.134.10
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: "1.0"
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - set -a; . /vault-secrets/realtime.env; set +a; exec /usr/bin/tini -s -g -- /app/run.sh "$$@"
+      - --
+    command: [ "/app/bin/server" ]
+    healthcheck:
+      # ANON_KEY is only in the process env of PID 1, so source it again here
+      test:
+        [
+          "CMD-SHELL",
+          ". /vault-secrets/realtime.env && curl -sSfL --head -o /dev/null -H \"Authorization: Bearer $$ANON_KEY\" http://localhost:4000/api/tenants/realtime-dev/health"
+        ]
+      timeout: 5s
+      interval: 30s
+      retries: 3
+      start_period: 10s
+    volumes:
+      - supabase-vault-secrets:/vault-secrets:ro
+    environment:
+      PORT: 4000
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: supabase_admin
+      DB_NAME: postgres
+      DB_AFTER_CONNECT_QUERY: 'SET search_path TO _realtime'
+      ERL_AFLAGS: -proto_dist inet_tcp
+      DNS_NODES: "''"
+      RLIMIT_NOFILE: "10000"
+      APP_NAME: realtime
+      SEED_SELF_HOST: "true"
+      RUN_JANITOR: "true"
+      DISABLE_HEALTHCHECK_LOGGING: "true"
+
+  # API gateway: the single entry point from outside (Traefik) and for Kestra/n8n (backend)
+  api-gw:
+    container_name: supabase-envoy
+    image: envoyproxy/envoy:v1.39.1
+    restart: unless-stopped
+    mem_limit: 128m
+    cpus: "0.5"
+    depends_on:
+      studio:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - set -a; . /vault-secrets/api-gw.env; set +a; exec /bin/sh /docker-entrypoint.sh
+    healthcheck:
+      # Image has neither curl nor wget
+      test: [ "CMD-SHELL", "timeout 1 bash -c '</dev/tcp/127.0.0.1/8000'" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    volumes:
+      - ./volumes/api/envoy/envoy.yaml:/etc/envoy/envoy.yaml:ro
+      - ./volumes/api/envoy/cds.yaml:/etc/envoy/cds.yaml:ro
+      - ./volumes/api/envoy/lds.template.yaml:/etc/envoy/lds.template.yaml:ro
+      - ./volumes/api/envoy/docker-entrypoint.sh:/docker-entrypoint.sh:ro
+      - supabase-vault-secrets:/vault-secrets:ro
+    environment:
+      SUPABASE_PUBLIC_URL: https://${TRAEFIK_HOST}
+      DASHBOARD_USERNAME: ${DASHBOARD_USERNAME:-supabase}
+      # New opaque API keys (sb_...) deliberately not used -> Envoy runs in legacy-key mode
+      SUPABASE_PUBLISHABLE_KEY: ""
+      SUPABASE_SECRET_KEY: ""
+      ANON_KEY_ASYMMETRIC: ""
+      SERVICE_ROLE_KEY_ASYMMETRIC: ""
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=frontend
+      - traefik.http.routers.supabase.rule=Host(`${TRAEFIK_HOST}`)
+      - traefik.http.routers.supabase.entrypoints=websecure
+      - traefik.http.routers.supabase.tls=true
+      - traefik.http.routers.supabase.tls.certresolver=ipv64
+      - traefik.http.routers.supabase.middlewares=supabase-chain@file
+      - traefik.http.services.supabase.loadbalancer.server.port=8000
+      - crowdsec.enable=true
+      - crowdsec.labels.type=supabase
+    networks:
+      default:
+        # Internal configs reference "kong" or "envoy"
+        aliases:
+          - envoy
+          - kong
+      frontend:
+      backend:
+
+volumes:
+  db-config:
+  supabase-vault-secrets:
+
+networks:
+  frontend:
+    external: true
+  backend:
+    external: true
+  # created by services/kestra (recreate Kestra first)
+  supabase-hooks:
+    external: true

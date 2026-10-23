@@ -1,0 +1,53 @@
+---
+# Collabora Online (CODE) as a dedicated document server for Nextcloud Office (Issue #93),
+# replaces the built-in CODE server (richdocumentscode) in the Nextcloud container.
+#
+# The browser connects directly to Collabora (own subdomain, no Authentik -- the editor
+# runs in an iframe and authenticates via WOPI tokens). Collabora calls back to
+# Nextcloud via its public hostname (WOPI), Nextcloud fetches /hosting/discovery from
+# here -- both via Traefik (*.example.com resolves to the host internally).
+#
+# No secrets: admin console deliberately disabled (no username/password set).
+# No no-new-privileges: jail isolation needs the file capabilities on
+# coolforkit-caps/coolmount, which no-new-privileges would neutralize.
+services:
+  collabora:
+    image: collabora/code:${VERSION}
+    container_name: collabora
+    restart: unless-stopped
+    mem_limit: 2g
+    mem_reservation: 1g
+    cpus: "2.0"
+
+    env_file:
+      - collabora.env
+
+    environment:
+      TZ: Europe/Berlin
+      # Only our own Nextcloud may use this server (port :443 must be included)
+      aliasgroup1: https://${NEXTCLOUD_HOST}:443
+      server_name: ${TRAEFIK_HOST}
+      # TLS terminates at Traefik
+      extra_params: --o:ssl.enable=false --o:ssl.termination=true
+      DONT_GEN_SSL_CERT: "1"
+      dictionaries: de_DE en_US
+
+    # The image ships its own healthcheck (coolwsd --probe)
+
+    networks:
+      - frontend
+
+    labels:
+      - traefik.enable=true
+
+      - traefik.http.routers.collabora.rule=Host(`${TRAEFIK_HOST}`)
+      - traefik.http.routers.collabora.entrypoints=websecure
+      - traefik.http.routers.collabora.tls=true
+      - traefik.http.routers.collabora.tls.certresolver=ipv64
+      - traefik.http.routers.collabora.middlewares=collabora-chain@file
+
+      - traefik.http.services.collabora.loadbalancer.server.port=9980
+
+networks:
+  frontend:
+    external: true

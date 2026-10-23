@@ -1,0 +1,24 @@
+http:
+  middlewares:
+    crowdsec:
+      plugin:
+        bouncer:
+          enabled: true
+          crowdsecMode: live
+          crowdsecAppsecEnabled: false
+
+          # Connection to the CrowdSec Local API on the host
+          crowdsecLapiScheme: http
+          crowdsecLapiHost: 198.51.100.10:8080
+          crowdsecLapiKey: "<CROWDSEC_BOUNCER_API_KEY>"
+
+          # Important headers for the real client IP
+          forwardedHeadersTrustedIPs:
+          - 203.0.113.0/24      # VPN Range
+
+          # Behavior on errors
+          defaultDecisionSeconds: 60
+          httpTimeoutSeconds: 10
+
+          # optional / recommended
+          updateMaxFailure: 0

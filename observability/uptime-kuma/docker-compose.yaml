@@ -1,0 +1,54 @@
+services:
+  uptime-kuma:
+    image: louislam/uptime-kuma:${VERSION}
+    container_name: uptime-kuma
+    restart: unless-stopped
+    mem_limit: 512m
+    mem_reservation: 256m
+    cpus: "1.0"
+
+    env_file:
+      - uptime-kuma.env
+
+    environment:
+      TZ: Europe/Berlin
+
+    volumes:
+      - /opt/docker/uptime-kuma/data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+    networks:
+      - frontend
+      - backend
+
+    security_opt:
+      - no-new-privileges:true
+
+    labels:
+      - traefik.enable=true
+
+      # Public status page: /status/* AND the shared SPA assets/APIs the status
+      # page needs to render (same JS bundle as the dashboard, Vite builds asset
+      # paths absolute from the root -- not under /status)
+      - traefik.http.routers.uptime-kuma-status.rule=Host(`${TRAEFIK_HOST}`) && (PathPrefix(`/status`) || PathPrefix(`/assets`) || PathPrefix(`/api/status-page`) || PathPrefix(`/api/badge`) || PathPrefix(`/socket.io`) || Path(`/icon.svg`) || Path(`/manifest.json`))
+      - traefik.http.routers.uptime-kuma-status.entrypoints=websecure
+      - traefik.http.routers.uptime-kuma-status.tls=true
+      - traefik.http.routers.uptime-kuma-status.tls.certresolver=ipv64
+      - traefik.http.routers.uptime-kuma-status.priority=100
+      - traefik.http.routers.uptime-kuma-status.middlewares=uptime-kuma-status-chain@file
+
+      # Dashboard (everything else): reachable from the VPN only
+      - traefik.http.routers.uptime-kuma.rule=Host(`${TRAEFIK_HOST}`)
+      - traefik.http.routers.uptime-kuma.entrypoints=websecure
+      - traefik.http.routers.uptime-kuma.tls=true
+      - traefik.http.routers.uptime-kuma.tls.certresolver=ipv64
+      - traefik.http.routers.uptime-kuma.priority=10
+      - traefik.http.routers.uptime-kuma.middlewares=uptime-kuma-chain@file
+
+      - traefik.http.services.uptime-kuma.loadbalancer.server.port=3001
+
+networks:
+  frontend:
+    external: true
+  backend:
+    external: true

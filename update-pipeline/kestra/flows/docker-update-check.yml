@@ -1,0 +1,139 @@
+# Kestra flow: daily Docker image update check + Telegram notification.
+# Uses the same helper image as update-on-merge.yml (see
+# services/kestra/update-runner/Dockerfile). Runs on a cron (daily 07:00)
+# AND via webhook (trigger "telegram-trigger") -- the latter is fired by
+# telegram-listener.yml when "checkversion" is typed in the Telegram chat
+# (the same polling listener that also catches "backupdb"/"summary" -- one
+# more command on the same per-minute schedule, no separate listener flow
+# needed).
+#
+# Telegram credentials come from Kestra's built-in secret() mechanism
+# (https://kestra.io/docs/how-to-guides/secrets) -- SECRET_TELEGRAM_BOT_TOKEN/
+# _CHAT_ID are fetched via Vault AppRole when the Kestra container starts and
+# set as base64-encoded env vars on the Kestra process (see
+# services/kestra/docker-compose.yaml, entrypoint). This flow therefore needs
+# NO Vault AppRole/login of its own -- previously (up to and including the
+# first version of this flow) it had its own "docker-update-check" AppRole with
+# its own role_id/secret_id mount; that is now obsolete.
+#
+# NOTE: like update-on-merge.yml, written without direct Kestra UI access. The
+# same class of pitfalls may apply, see the header comment there or
+# services/kestra/README.md.
+#
+# Prerequisites on the host before (re-)importing this flow:
+#   1. Vault: extend the kestra-ro policy with homelab/data/services/telegram
+#      (see services/kestra/README.md, section "Docker update check") --
+#      if that was already done for the ETF price update migration, nothing
+#      is left to do here.
+#   2. Build the helper image if not done yet:
+#      docker build -t homelab-update-runner:latest services/kestra/update-runner
+#   3. Restart the Kestra container so the new SECRET_* env vars take
+#      effect: docker compose -f services/kestra/docker-compose.yaml up -d --force-recreate kestra
+#   4. Import the flow into Kestra (UI -> Flows -> Create/Update).
+
+id: docker-update-check
+namespace: homelab
+
+triggers:
+  - id: daily
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 7 * * *"
+    timezone: Europe/Berlin
+  - id: telegram-trigger
+    type: io.kestra.plugin.core.trigger.Webhook
+    key: "<KESTRA_WEBHOOK_KEY>"
+
+tasks:
+  # Task 1 only needs the Telegram secrets: the update list always goes out, even if
+  # Supabase/n8n/Mindwtr (task 2) are not set up yet or are down.
+  - id: check-and-notify
+    type: io.kestra.plugin.scripts.shell.Commands
+    taskRunner:
+      type: io.kestra.plugin.scripts.runner.docker.Docker
+      image: homelab-update-runner:latest
+      pullPolicy: NEVER
+      cpu:
+        cpus: "1"
+      memory:
+        memory: "512MB"
+      volumes:
+        - /data/gitea/homelab:/repo
+        - /var/run/docker.sock:/var/run/docker.sock
+    env:
+      BOT_TOKEN: "{{ secret('TELEGRAM_BOT_TOKEN') }}"
+      CHAT_ID: "{{ secret('TELEGRAM_CHAT_ID') }}"
+    commands:
+      - |
+        set -e
+        # Findings as JSON lines -> passed to task 2 as output variable "updates"
+        # (same mechanism as summary in update-on-merge.yml)
+        export UPDATE_CHECK_JSON=/tmp/updates.jsonl
+        : > "$UPDATE_CHECK_JSON"
+        git config --global --add safe.directory /repo
+        cd /repo
+
+        OUTPUT=$(bash scripts/docker/docker-update-check.sh 2>&1)
+        echo "$OUTPUT"
+
+        jq -n --arg chat_id "$CHAT_ID" --arg text "$OUTPUT" '{chat_id: $chat_id, text: $text}' \
+          | curl -sf -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+            -H "Content-Type: application/json" -d @-
+
+        # The Telegram response ends without a newline -- but the output line must
+        # start at the beginning of a line, otherwise Kestra does not pick it up
+        echo
+        echo "::{\"outputs\":{\"updates\":$(jq -Rs . < "$UPDATE_CHECK_JSON")}}::"
+
+  # Task 2 (Issue #72): every further step starts from this run.
+  #   0. running containers (docker ps, read here directly) -> containers (inventory; must
+  #      run before 1.: candidates for images without a versions.yaml entry must exist there)
+  #   1. findings -> update_candidates (Supabase)
+  #   2. open candidates without a task: changelog via n8n, Mindwtr task, Telegram if needed;
+  #      close the tasks of finished candidates (also catches up on backlog)
+  #   3. generate config/versions.yaml from Supabase and on change commit it directly to
+  #      main (Supabase is the source of truth, phase 4) -> Gitea webhook -> update-on-merge
+  #      deploys changed target versions (only updateable + deployable)
+  # All steps run even if one fails; the execution is then marked as
+  # failed. If one of the secrets is missing, only this task fails.
+  - id: candidates
+    type: io.kestra.plugin.scripts.shell.Commands
+    taskRunner:
+      type: io.kestra.plugin.scripts.runner.docker.Docker
+      image: homelab-update-runner:latest
+      pullPolicy: NEVER
+      cpu:
+        cpus: "0.5"
+      memory:
+        memory: "256MB"
+      # backend: supabase-envoy, n8n and mindwtr-cloud
+      networkMode: backend
+      volumes:
+        - /data/gitea/homelab:/repo:ro
+        - /var/run/docker.sock:/var/run/docker.sock
+        # Push of versions.yaml: dedicated deploy key WITH write access, mounted only here
+        # (the server key in /home/admin/.ssh is read-only on purpose), plus known_hosts
+        - /opt/docker/secrets/kestra_git_push_key:/secrets/git_push_key:ro
+        - /home/admin/.ssh/known_hosts:/root/.ssh/known_hosts:ro
+    env:
+      UPDATES_JSONL: "{{ outputs['check-and-notify'].vars.updates }}"
+      BOT_TOKEN: "{{ secret('TELEGRAM_BOT_TOKEN') }}"
+      CHAT_ID: "{{ secret('TELEGRAM_CHAT_ID') }}"
+      SUPABASE_URL: http://supabase-envoy:8000
+      SUPABASE_ANON_KEY: "{{ secret('SUPABASE_ANON_KEY') }}"
+      SUPABASE_JWT: "{{ secret('SUPABASE_SYNC_JWT') }}"
+      N8N_URL: http://n8n:5678/webhook/changelog-summary
+      N8N_WEBHOOK_SECRET: "{{ secret('N8N_WEBHOOK_SECRET') }}"
+      MINDWTR_URL: http://mindwtr-cloud:8787
+      MINDWTR_TOKEN: "{{ secret('MINDWTR_TOKEN') }}"
+      # Gitea SSH on port 2222, current repo name (not the old slug "homelap")
+      GIT_PUSH_URL: ssh://git@gitea.example.com:2222/owner/homelab.git
+    commands:
+      - |
+        cd /repo
+        RC=0
+        docker ps --format json | python3 scripts/supabase/record-inventory.py || RC=1
+        printf '%s' "$UPDATES_JSONL" | python3 scripts/supabase/record-candidates.py || RC=1
+        python3 scripts/supabase/process-candidate.py pending || RC=1
+        git config --global --add safe.directory /repo
+        sh scripts/supabase/commit-versions.sh || RC=1
+        exit $RC

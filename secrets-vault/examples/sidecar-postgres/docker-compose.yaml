@@ -1,0 +1,62 @@
+include:
+  - /opt/docker/secrets/secrets.yaml
+services:
+  vault-agent:
+    image: homelab-update-runner:latest
+    container_name: postgres-vault-agent
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        ROLE_ID=$$(cat /run/secrets/postgres_vault_role_id)
+        SECRET_ID=$$(cat /run/secrets/postgres_vault_secret_id)
+        LOGIN_RESPONSE=$$(curl -sf -X POST \
+          -d "{\"role_id\":\"$$ROLE_ID\",\"secret_id\":\"$$SECRET_ID\"}" \
+          http://vault:8200/v1/auth/approle/login)
+        VAULT_TOKEN=$$(echo "$$LOGIN_RESPONSE" | jq -r '.auth.client_token')
+
+        SECRET_RESPONSE=$$(curl -sf -H "X-Vault-Token: $$VAULT_TOKEN" \
+          http://vault:8200/v1/homelab/data/databases/postgres)
+
+        echo "$$SECRET_RESPONSE" | jq -r '.data.data.admin_password' > /vault-secrets/admin_password.txt
+        chmod 600 /vault-secrets/admin_password.txt
+    secrets:
+      - postgres_vault_role_id
+      - postgres_vault_secret_id
+    volumes:
+      - postgres-vault-secrets:/vault-secrets
+    networks:
+      - backend
+    restart: "no"
+
+  postgres:
+    image: docker.io/library/postgres:${VERSION}
+    container_name: postgres
+    depends_on:
+      vault-agent:
+        condition: service_completed_successfully
+    env_file:
+      - ./postgres.env # <-- POSTGRES_USER/DB come from here
+    environment:
+      TZ: Europe/Berlin
+      POSTGRES_PASSWORD_FILE: /vault-secrets/admin_password.txt
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\"" ]
+      start_period: 30s
+      interval: 10s
+      timeout: 10s
+      retries: 5
+    volumes:
+      - /opt/docker/postgres/data:/var/lib/postgresql/data
+      - postgres-vault-secrets:/vault-secrets:ro
+    restart: unless-stopped
+    networks:
+      - backend
+
+volumes:
+  postgres-vault-secrets:
+
+networks:
+  backend:
+    external: true

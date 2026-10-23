@@ -1,0 +1,93 @@
+include:
+  - /opt/docker/secrets/secrets.yaml
+
+services:
+  n8n:
+    image: n8nio/n8n:${VERSION}
+    container_name: n8n
+    restart: unless-stopped
+    mem_limit: 1g
+    mem_reservation: 512mb
+    cpus: "2"
+
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        ROLE_ID=$$(cat /run/secrets/n8n_vault_role_id)
+        SECRET_ID=$$(cat /run/secrets/n8n_vault_secret_id)
+        LOGIN_RESPONSE=$$(wget -qO- --header="Content-Type: application/json" \
+          --post-data="{\"role_id\":\"$$ROLE_ID\",\"secret_id\":\"$$SECRET_ID\"}" \
+          http://vault:8200/v1/auth/approle/login)
+        VAULT_TOKEN=$$(echo "$$LOGIN_RESPONSE" | grep -o '"client_token":"[^"]*"' | cut -d'"' -f4)
+
+        SECRET_RESPONSE=$$(wget -qO- --header="X-Vault-Token: $$VAULT_TOKEN" \
+          http://vault:8200/v1/homelab/data/services/n8n)
+        export N8N_ENCRYPTION_KEY=$$(echo "$$SECRET_RESPONSE" | grep -o '"encryption_key":"[^"]*"' | cut -d'"' -f4)
+
+        DB_SECRET_RESPONSE=$$(wget -qO- --header="X-Vault-Token: $$VAULT_TOKEN" \
+          http://vault:8200/v1/homelab/data/databases/postgres)
+        export DB_POSTGRESDB_PASSWORD=$$(echo "$$DB_SECRET_RESPONSE" | grep -o '"n8n_password":"[^"]*"' | cut -d'"' -f4)
+
+        # Shared secret for incoming webhooks (header x-webhook-secret), e.g. from
+        # Kestra docker-update-check -> workflow changelog-summary. Separate path so
+        # Kestra may read it without getting access to services/n8n (encryption_key).
+        WEBHOOK_SECRET_RESPONSE=$$(wget -qO- --header="X-Vault-Token: $$VAULT_TOKEN" \
+          http://vault:8200/v1/homelab/data/services/n8n-webhook)
+        export N8N_WEBHOOK_SECRET=$$(echo "$$WEBHOOK_SECRET_RESPONSE" | grep -o '"webhook_secret":"[^"]*"' | cut -d'"' -f4)
+        if [ -z "$$N8N_WEBHOOK_SECRET" ]; then
+          echo "FEHLER: webhook_secret fehlt/leer in homelab/services/n8n-webhook" >&2
+          exit 1
+        fi
+
+        exec tini -- /docker-entrypoint.sh
+
+    env_file:
+      - n8n.env
+
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: "5432"
+      DB_POSTGRESDB_DATABASE: n8n
+      DB_POSTGRESDB_USER: n8n_db
+
+      N8N_HOST: ${TRAEFIK_HOST}
+      N8N_PROTOCOL: https
+      N8N_PORT: "5678"
+      N8N_PROXY_HOPS: "1"
+      N8N_SECURE_COOKIE: "true"
+      # Blocked by default since n8n 2.0. Needed so workflows can check the webhook
+      # secret from Vault via {{$env.N8N_WEBHOOK_SECRET}} (Vault stays the single
+      # source). Accepted trade-off: every workflow can read all n8n variables this way
+      # (incl. N8N_ENCRYPTION_KEY) -- acceptable since I am the only n8n user (#72).
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+      WEBHOOK_URL: https://${TRAEFIK_HOST}/
+      GENERIC_TIMEZONE: Europe/Berlin
+
+    secrets:
+      - n8n_vault_role_id
+      - n8n_vault_secret_id
+
+    volumes:
+      - /opt/docker/n8n/data:/home/node/.n8n
+
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.n8n.rule=Host(`${TRAEFIK_HOST}`)
+      - traefik.http.routers.n8n.entrypoints=websecure
+      - traefik.http.routers.n8n.tls=true
+      - traefik.http.routers.n8n.tls.certresolver=ipv64
+      - traefik.http.services.n8n.loadbalancer.server.port=5678
+      - traefik.http.routers.n8n.middlewares=std-adm-internal-chain@file
+
+    networks:
+      - frontend
+      - backend
+
+networks:
+  frontend:
+    external: true
+  backend:
+    external: true

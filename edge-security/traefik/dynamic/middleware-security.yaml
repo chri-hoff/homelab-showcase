@@ -1,0 +1,35 @@
+http:
+  middlewares:
+    secure-headers:
+      headers:
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        stsPreload: true
+        contentTypeNosniff: true
+        browserXssFilter: true
+        frameDeny: true
+        referrerPolicy: "strict-origin-when-cross-origin"
+
+    secure-headers-nextcloud:
+      headers:
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        stsPreload: true
+        contentTypeNosniff: true
+        browserXssFilter: true
+        frameDeny: false
+        customResponseHeaders:
+          X-Frame-Options: "SAMEORIGIN"
+        referrerPolicy: "strict-origin-when-cross-origin"
+
+    # Collabora runs in Nextcloud's iframe (different subdomain): no frameDeny and no
+    # X-Frame-Options. Collabora sets CSP frame-ancestors itself from aliasgroup1.
+    secure-headers-collabora:
+      headers:
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        stsPreload: true
+        contentTypeNosniff: true
+        browserXssFilter: true
+        frameDeny: false
+        referrerPolicy: "strict-origin-when-cross-origin"

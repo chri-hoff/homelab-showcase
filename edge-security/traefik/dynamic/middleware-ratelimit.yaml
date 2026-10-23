@@ -1,0 +1,34 @@
+http:
+  middlewares:
+    authentik-ratelimit:
+      rateLimit:
+        average: 120
+        period: 1m
+        burst: 60
+
+    vaultwarden-ratelimit:
+      rateLimit:
+        average: 30
+        burst: 60
+
+    vaultwarden-admin-ratelimit:
+      rateLimit:
+        average: 5
+        burst: 10
+
+    n8n-webhook-ratelimit:
+      rateLimit:
+        average: 10
+        period: 1m
+        burst: 20
+
+    mindwtr-ratelimit:
+      rateLimit:
+        average: 30
+        burst: 60
+
+    # Collabora: the first editor load fetches many assets at once -> large burst
+    collabora-ratelimit:
+      rateLimit:
+        average: 100
+        burst: 300

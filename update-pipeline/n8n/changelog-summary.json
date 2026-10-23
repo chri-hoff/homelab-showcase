@@ -1,0 +1,374 @@
+{
+  "name": "changelog-summary",
+  "nodes": [
+    {
+      "id": "1175615a-fad3-4f21-9bf5-45101c7e1293",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "changelog-summary",
+        "responseMode": "responseNode",
+        "responseData": "success",
+        "options": {}
+      },
+      "webhookId": "a0a8edb9-5f9b-4e36-bb3a-838e46377347"
+    },
+    {
+      "id": "a98dd687-f653-4eea-84b0-b442b190ae16",
+      "name": "Webhook-Secret pruefen",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.headers['x-webhook-secret']}}",
+              "rightValue": "={{$env.N8N_WEBHOOK_SECRET}}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "5c749502-cc4d-469f-8f7a-20f8a307a655",
+      "name": "Payload parsen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Expects {\"image\": \"emqx/emqx:6.3.2\"} -- called by process-candidate.py (docker-update-check).\nconst body = $input.item.json.body ?? $input.item.json;\nconst imageRef = body.image || '';\n\nlet refPart = imageRef;\nlet tag = 'latest';\nconst lastColon = imageRef.lastIndexOf(':');\nconst lastSlash = imageRef.lastIndexOf('/');\nif (lastColon > lastSlash) {\n  refPart = imageRef.substring(0, lastColon);\n  tag = imageRef.substring(lastColon + 1);\n}\n\nlet pathParts = refPart.split('/');\nif (pathParts[0].includes('.') || pathParts[0] === 'docker.io') {\n  pathParts = pathParts.slice(1);\n}\nconst repoPath = pathParts.join('/');\n\nreturn [{ json: { image: imageRef, tag, repoPath } }];"
+      }
+    },
+    {
+      "id": "cecc140b-25f1-4742-8212-4c32ca28fcff",
+      "name": "Image zu GitHub-Repo mappen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Known Docker image paths -> GitHub repo. Extend as needed\n// when a new service is added to config/versions.yaml.\nconst map = {\n  'envoyproxy/envoy': { owner: 'envoyproxy', repo: 'envoy' },\n  'postgrest/postgrest': { owner: 'PostgREST', repo: 'postgrest' },\n  'supabase/gotrue': { owner: 'supabase', repo: 'auth' },\n  'supabase/postgres-meta': { owner: 'supabase', repo: 'postgres-meta' },\n  'supabase/realtime': { owner: 'supabase', repo: 'realtime' },\n  'emqx/emqx': { owner: 'emqx', repo: 'emqx' },\n  'influxdb': { owner: 'influxdata', repo: 'influxdb' },\n  'library/influxdb': { owner: 'influxdata', repo: 'influxdb' },\n  'louislam/uptime-kuma': { owner: 'louislam', repo: 'uptime-kuma' },\n  'dongdongbh/mindwtr-cloud': { owner: 'dongdongbh', repo: 'Mindwtr' },\n  'traefik': { owner: 'traefik', repo: 'traefik' },\n  'grafana/grafana': { owner: 'grafana', repo: 'grafana' },\n  'grafana/loki': { owner: 'grafana', repo: 'loki' },\n  'goauthentik/server': { owner: 'goauthentik', repo: 'authentik' },\n  'gitea/gitea': { owner: 'go-gitea', repo: 'gitea' },\n  'hashicorp/vault': { owner: 'hashicorp', repo: 'vault' },\n  'vaultwarden/server': { owner: 'dani-garcia', repo: 'vaultwarden' },\n  'n8nio/n8n': { owner: 'n8n-io', repo: 'n8n' },\n  'crazymax/diun': { owner: 'crazy-max', repo: 'diun' },\n  'kestra/kestra': { owner: 'kestra-io', repo: 'kestra' },\n  'adguard/adguardhome': { owner: 'AdguardTeam', repo: 'AdGuardHome' },\n  'library/redis': { owner: 'redis', repo: 'redis' },\n  'redis': { owner: 'redis', repo: 'redis' },\n  'library/nextcloud': { owner: 'nextcloud', repo: 'server' },\n  'nextcloud': { owner: 'nextcloud', repo: 'server' }\n};\n\nconst item = $input.item.json;\nconst hit = map[item.repoPath] || null;\n\nreturn [{\n  json: {\n    ...item,\n    githubOwner: hit ? hit.owner : null,\n    githubRepo: hit ? hit.repo : null\n  }\n}];"
+      }
+    },
+    {
+      "id": "224ac129-8350-4d78-a173-ae6e5dd82392",
+      "name": "Mapping gefunden?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        880,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.githubOwner}}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "4b3c8ae0-7cfa-498d-9f23-576c71a37dc0",
+      "name": "GitHub Releases holen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        100
+      ],
+      "parameters": {
+        "url": "=https://api.github.com/repos/{{$json.githubOwner}}/{{$json.githubRepo}}/releases?per_page=5",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "homelab-diun-n8n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "66157229-8e9a-4650-ad5e-165756ddaaca",
+      "name": "Release-Notes formatieren",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        100
+      ],
+      "parameters": {
+        "jsCode": "const items = $input.all();\nlet releases;\nif (items.length === 1 && Array.isArray(items[0].json)) {\n  releases = items[0].json;\n} else {\n  releases = items.map(i => i.json);\n}\n\nconst top = releases.slice(0, 3);\nconst notes = top\n  .map(r => `## ${r.tag_name || r.name || '?'}\\n${(r.body || '(keine Release-Notes)').slice(0, 1500)}`)\n  .join('\\n\\n---\\n\\n');\n\nconst ctx = $('Image zu GitHub-Repo mappen').item.json;\n\nreturn [{\n  json: {\n    ...ctx,\n    releaseNotes: notes || '(keine Release-Notes gefunden)'\n  }\n}];"
+      }
+    },
+    {
+      "id": "ce8e446a-4f82-43e0-a0e9-f089f158cdae",
+      "name": "Claude Zusammenfassung",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        100
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-haiku-4-5-20251001\",\n  \"max_tokens\": 500,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": {{JSON.stringify('Fasse auf Deutsch kurz zusammen, was sich fuer ' + $json.image + ' (neue Version: ' + $json.tag + ') laut folgenden Release-Notes geaendert hat. Gib am Ende eine klare Handlungsempfehlung (Update jetzt sinnvoll: ja/nein/abwarten) und weise auf Breaking Changes hin, falls vorhanden.\\n\\nRelease-Notes:\\n' + $json.releaseNotes) }}\n    }\n  ]\n}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Anthropic API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Release-Notes formatieren').item.json;\nconst claude = $input.item.json;\nconst summary = claude.content && claude.content[0] ? claude.content[0].text : null;\nreturn [{ json: { mapped: true, repo: ctx.githubOwner + '/' + ctx.githubRepo, tag: ctx.tag, summary } }];"
+      },
+      "id": "14d6f893-f63b-4047-ae09-f1d010205477",
+      "name": "Antwort (mit KI)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $input.item.json;\nreturn [{ json: { mapped: false, repo: null, tag: ctx.tag, summary: null } }];"
+      },
+      "id": "e44e5f1f-e265-4991-82e7-ffa91df25bda",
+      "name": "Antwort (ohne Mapping)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "37d6944f-dbea-48f8-b404-df1391485b58",
+      "name": "Antworten",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1980,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"error\": \"forbidden\" } }}",
+        "options": {
+          "responseCode": 403
+        }
+      },
+      "id": "9ae1da08-4dbd-4080-87c0-ee367f60bf2c",
+      "name": "Abweisen (403)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        440,
+        420
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Webhook-Secret pruefen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook-Secret pruefen": {
+      "main": [
+        [
+          {
+            "node": "Payload parsen",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Abweisen (403)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Payload parsen": {
+      "main": [
+        [
+          {
+            "node": "Image zu GitHub-Repo mappen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Image zu GitHub-Repo mappen": {
+      "main": [
+        [
+          {
+            "node": "Mapping gefunden?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mapping gefunden?": {
+      "main": [
+        [
+          {
+            "node": "GitHub Releases holen",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Antwort (ohne Mapping)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GitHub Releases holen": {
+      "main": [
+        [
+          {
+            "node": "Release-Notes formatieren",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Release-Notes formatieren": {
+      "main": [
+        [
+          {
+            "node": "Claude Zusammenfassung",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Zusammenfassung": {
+      "main": [
+        [
+          {
+            "node": "Antwort (mit KI)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Antwort (mit KI)": {
+      "main": [
+        [
+          {
+            "node": "Antworten",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Antwort (ohne Mapping)": {
+      "main": [
+        [
+          {
+            "node": "Antworten",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}

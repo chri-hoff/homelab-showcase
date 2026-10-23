@@ -1,0 +1,103 @@
+---
+include:
+  - /opt/docker/secrets/secrets.yaml
+services:
+  gitea:
+    image: gitea/gitea:${VERSION:?error}
+    container_name: gitea
+    restart: unless-stopped
+
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        ROLE_ID=$$(cat /run/secrets/gitea_vault_role_id)
+        SECRET_ID=$$(cat /run/secrets/gitea_vault_secret_id)
+        LOGIN_RESPONSE=$$(curl -sf -X POST \
+          -d "{\"role_id\":\"$$ROLE_ID\",\"secret_id\":\"$$SECRET_ID\"}" \
+          http://vault:8200/v1/auth/approle/login)
+        VAULT_TOKEN=$$(echo "$$LOGIN_RESPONSE" | grep -o '"client_token":"[^"]*"' | cut -d'"' -f4)
+
+        SECRET_RESPONSE=$$(curl -sf -H "X-Vault-Token: $$VAULT_TOKEN" \
+          http://vault:8200/v1/homelab/data/services/gitea)
+        export GITEA__security__SECRET_KEY=$$(echo "$$SECRET_RESPONSE" | grep -o '"secret_key":"[^"]*"' | cut -d'"' -f4)
+        export GITEA__security__INTERNAL_TOKEN=$$(echo "$$SECRET_RESPONSE" | grep -o '"internal_token":"[^"]*"' | cut -d'"' -f4)
+
+        DB_SECRET_RESPONSE=$$(curl -sf -H "X-Vault-Token: $$VAULT_TOKEN" \
+          http://vault:8200/v1/homelab/data/databases/postgres)
+        export GITEA__database__PASSWD=$$(echo "$$DB_SECRET_RESPONSE" | grep -o '"gitea_password":"[^"]*"' | cut -d'"' -f4)
+
+        exec /usr/bin/entrypoint "$$@"
+      - --
+
+    env_file:
+      - gitea.env
+
+    environment:
+      GITEA__database__DB_TYPE: ${DB_TYPE}
+      GITEA__database__HOST: ${DB_HOST}
+      GITEA__database__NAME: ${DB_NAME}
+      GITEA__database__USER: ${DB_USER}
+
+      GITEA__server__DOMAIN: ${TRAEFIK_HOST}
+      GITEA__server__ROOT_URL: https://${TRAEFIK_HOST}
+      GITEA__server__HTTP_PORT: "3000"
+      GITEA__server__SSH_DOMAIN: ${TRAEFIK_HOST}
+      GITEA__server__START_SSH_SERVER: "true"
+      GITEA__server__SSH_PORT: "2222"
+      GITEA__server__SSH_LISTEN_PORT: "2222"
+
+      GITEA__service__DISABLE_REGISTRATION: "true"
+
+    secrets:
+      - gitea_vault_role_id
+      - gitea_vault_secret_id
+
+      # SMTP (optional)
+      # GITEA__mailer__ENABLED: "true"
+      # GITEA__mailer__SMTP_ADDR: ${SMTP_HOST}
+      # GITEA__mailer__SMTP_PORT: ${SMTP_PORT}
+      # GITEA__mailer__FROM: ${SMTP_FROM}
+      # GITEA__mailer__USER: ${SMTP_USERNAME}
+      # GITEA__mailer__PASSWD: ${SMTP_PASSWORD}
+
+    ports:
+      - "2222:2222"   # SSH
+
+    volumes:
+      - /opt/docker/gitea/data:/data
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+
+    networks:
+      - frontend
+      - backend
+
+    security_opt:
+      - no-new-privileges:true
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=frontend
+
+      - traefik.http.routers.gitea.entrypoints=websecure
+      - traefik.http.routers.gitea.rule=Host(`${TRAEFIK_HOST}`)
+      - traefik.http.routers.gitea.tls=true
+      - traefik.http.routers.gitea.tls.certresolver=ipv64
+
+      - traefik.http.services.gitea.loadbalancer.server.port=3000
+      - traefik.http.routers.gitea.middlewares=std-app-internal-chain@file
+
+networks:
+  frontend:
+    external: true
+  backend:
+    external: true

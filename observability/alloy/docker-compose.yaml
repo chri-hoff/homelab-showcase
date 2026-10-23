@@ -1,0 +1,47 @@
+services:
+  alloy:
+    image: grafana/alloy:${VERSION}
+    container_name: alloy
+    env_file:
+      - alloy.env
+    command: >
+      run --server.http.listen-addr=0.0.0.0:12345 --storage.path=/var/lib/alloy /etc/alloy/config.alloy
+
+    volumes:
+      - /opt/docker/alloy/config/config.alloy:/etc/alloy/config.alloy:ro
+      - /opt/docker/alloy/data:/var/lib/alloy
+
+      # Host logs
+      - /var/log:/var/log:ro
+      - /etc/machine-id:/etc/machine-id:ro
+      - /data/backup/ThinkCentre/log:/data/backup/ThinkCentre/log:ro
+      # === SYSTEMD JOURNAL (CRITICAL!) ===
+      - /var/log/journal:/var/log/journal:ro
+      - /run/log/journal:/run/log/journal:ro
+
+      # Docker container logs (json-file) + metadata
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+    # If you get "permission denied" when reading /var/lib/docker/containers:
+    # user: "0:0"
+
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.alloy.rule=Host(`${TRAEFIK_HOST}`)
+      - traefik.http.routers.alloy.entrypoints=websecure
+      - traefik.http.routers.alloy.tls=true
+      - traefik.http.routers.alloy.tls.certresolver=ipv64
+      - traefik.http.services.alloy.loadbalancer.server.port=12345
+      - traefik.http.routers.alloy.middlewares=std-adm-internal-chain@file
+
+    restart: unless-stopped
+    networks:
+      - backend
+      - frontend # only needed if you want the UI via Traefik
+
+networks:
+  frontend:
+    external: true
+  backend:
+    external: true

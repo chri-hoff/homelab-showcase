@@ -1,0 +1,35 @@
+# Custom CrowdSec scenario: ban repeated 401s (wrong credentials) via Traefik.
+#
+# Why: crowdsecurity/http-generic-bf (from the Traefik collection) only counts 401 on POST.
+# Basic auth in the browser, API clients with a wrong token etc. use GET -> never detected.
+#
+# Nextcloud sync (WebDAV/OCS) is excluded: desktop and mobile clients routinely produce
+# 401 series there (auth challenge, expired app passwords) -- that would ban my own
+# devices on the mobile network. Nextcloud has its own brute-force throttling for that.
+#
+# Installation on the host:
+#   sudo install -m 644 config/crowdsec/scenarios/homelab-http-401-bf.yaml /etc/crowdsec/scenarios/
+#   sudo crowdsec -t; and sudo systemctl reload crowdsec
+type: leaky
+name: homelab/http-401-bf
+description: "Detect HTTP 401 brute force on any method (Traefik access log)"
+filter: >-
+  evt.Meta.service == 'http'
+  && evt.Meta.http_status == '401'
+  && !(evt.Meta.http_path startsWith '/remote.php/')
+  && !(evt.Meta.http_path startsWith '/ocs/')
+  && !(evt.Meta.http_path startsWith '/index.php/apps/richdocuments/wopi/')
+groupby: evt.Meta.source_ip
+# 10 failed attempts, bucket leaks 1 per 10 s -> roughly 10 failed attempts in 1-2 minutes
+capacity: 10
+leakspeed: "10s"
+blackhole: 2m
+labels:
+  confidence: 2
+  spoofable: 0
+  classification:
+    - attack.T1110
+  behavior: "http:bruteforce"
+  label: "HTTP 401 Bruteforce (homelab)"
+  service: http
+  remediation: true

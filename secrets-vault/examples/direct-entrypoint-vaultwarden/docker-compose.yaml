@@ -1,0 +1,102 @@
+---
+include:
+  - /opt/docker/secrets/secrets.yaml
+
+services:
+  vaultwarden:
+    image: vaultwarden/server:${VERSION}
+    container_name: vaultwarden
+    restart: unless-stopped
+
+    secrets:
+      - vaultwarden_vault_role_id
+      - vaultwarden_vault_secret_id
+
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        ROLE_ID=$$(cat /run/secrets/vaultwarden_vault_role_id)
+        SECRET_ID=$$(cat /run/secrets/vaultwarden_vault_secret_id)
+        LOGIN_RESPONSE=$$(curl -sf -X POST \
+          -d "{\"role_id\":\"$$ROLE_ID\",\"secret_id\":\"$$SECRET_ID\"}" \
+          http://vault:8200/v1/auth/approle/login)
+        VAULT_TOKEN=$$(echo "$$LOGIN_RESPONSE" | grep -o '"client_token":"[^"]*"' | cut -d'"' -f4)
+
+        VW_RESPONSE=$$(curl -sf -H "X-Vault-Token: $$VAULT_TOKEN" \
+          http://vault:8200/v1/homelab/data/services/vaultwarden)
+        export ADMIN_TOKEN=$$(echo "$$VW_RESPONSE" | grep -o '"admin_token":"[^"]*"' | cut -d'"' -f4)
+        export DATABASE_URL=$$(echo "$$VW_RESPONSE" | grep -o '"database_url":"[^"]*"' | cut -d'"' -f4)
+
+        SMTP_RESPONSE=$$(curl -sf -H "X-Vault-Token: $$VAULT_TOKEN" \
+          http://vault:8200/v1/homelab/data/services/smtp)
+        export SMTP_USERNAME=$$(echo "$$SMTP_RESPONSE" | grep -o '"user":"[^"]*"' | cut -d'"' -f4)
+        export SMTP_PASSWORD=$$(echo "$$SMTP_RESPONSE" | grep -o '"password":"[^"]*"' | cut -d'"' -f4)
+        export SMTP_FROM=$$(echo "$$SMTP_RESPONSE" | grep -o '"from":"[^"]*"' | cut -d'"' -f4)
+
+        exec /vaultwarden
+      - --
+
+    env_file:
+      - vaultwarden.env
+
+    environment:
+      DOMAIN: ${TRAEFIK_HOST}
+
+      EXTENDED_LOGGING: "true"
+      LOG_TIMESTAMP_FORMAT: "%Y-%m-%d %H:%M:%S.%3f%z"
+      # ROCKET_TRUSTED_PROXIES: "172.16.0.0/12"
+
+      SIGNUPS_ALLOWED: ${VW_SIGNUPS_ALLOWED}
+      INVITATIONS_ALLOWED: ${VW_INVITATIONS_ALLOWED}
+      WEBSOCKET_ENABLED: ${VW_WEBSOCKET_ENABLED}
+      SHOW_PASSWORD_HINT: ${VW_SHOW_PASSWORD_HINT}
+      LOG_LEVEL: ${VW_LOG_LEVEL}
+
+      SMTP_HOST: ${VW_SMTP_HOST}
+      SMTP_PORT: ${VW_SMTP_PORT}
+      SMTP_SECURITY: ${VW_SMTP_SECURITY}
+
+    volumes:
+      - /opt/docker/vaultwarden/data:/data
+
+    networks:
+      - frontend
+      - backend
+
+    security_opt:
+      - no-new-privileges:true
+
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=frontend
+
+      # Enable CrowdSec
+      - crowdsec.enable=true
+      - crowdsec.labels.type=Vaultwarden
+
+      # Service
+      - traefik.http.services.vaultwarden.loadbalancer.server.port=80
+
+      # Public access for users / apps / browser extensions
+      - traefik.http.routers.vaultwarden-public.rule=Host("${TRAEFIK_HOST}")
+      - traefik.http.routers.vaultwarden-public.entrypoints=websecure
+      - traefik.http.routers.vaultwarden-public.tls=true
+      - traefik.http.routers.vaultwarden-public.tls.certresolver=ipv64
+      - traefik.http.routers.vaultwarden-public.priority=10
+      - traefik.http.routers.vaultwarden-public.middlewares=vaultwarden-public-chain@file
+
+      # Admin area internal only via /admin
+      - traefik.http.routers.vaultwarden-admin.rule=Host("${TRAEFIK_HOST}") && PathPrefix(`/admin`)
+      - traefik.http.routers.vaultwarden-admin.entrypoints=websecure
+      - traefik.http.routers.vaultwarden-admin.tls=true
+      - traefik.http.routers.vaultwarden-admin.tls.certresolver=ipv64
+      - traefik.http.routers.vaultwarden-admin.priority=100
+      - traefik.http.routers.vaultwarden-admin.middlewares=vaultwarden-admin-chain@file
+
+networks:
+  frontend:
+    external: true
+  backend:
+    external: true

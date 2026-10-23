@@ -1,0 +1,196 @@
+---
+include:
+  - /opt/docker/secrets/secrets.yaml
+services:
+  server:
+    image: ghcr.io/goauthentik/server:${VERSION}
+    container_name: authentik-server
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        ROLE_ID=$$(cat /run/secrets/authentik_vault_role_id)
+        SECRET_ID=$$(cat /run/secrets/authentik_vault_secret_id)
+
+        # This image (Debian trixie, ghcr.io/goauthentik/server) has neither
+        # curl nor wget -- python3 on the other hand is guaranteed to exist
+        # (Authentik itself is Python/Django), hence urllib instead of an HTTP tool.
+        VAULT_TOKEN=$$(ROLE_ID="$$ROLE_ID" SECRET_ID="$$SECRET_ID" python3 -c '
+        import json, os, urllib.request
+        payload = json.dumps({"role_id": os.environ["ROLE_ID"], "secret_id": os.environ["SECRET_ID"]}).encode()
+        req = urllib.request.Request("http://vault:8200/v1/auth/approle/login", data=payload, method="POST")
+        with urllib.request.urlopen(req) as resp:
+            print(json.load(resp)["auth"]["client_token"])
+        ')
+
+        export AUTHENTIK_POSTGRESQL__PASSWORD=$$(VAULT_TOKEN="$$VAULT_TOKEN" python3 -c '
+        import json, os, urllib.request
+        req = urllib.request.Request("http://vault:8200/v1/homelab/data/databases/postgres", headers={"X-Vault-Token": os.environ["VAULT_TOKEN"]})
+        with urllib.request.urlopen(req) as resp:
+            print(json.load(resp)["data"]["data"]["authentik_password"])
+        ')
+
+        export AUTHENTIK_SECRET_KEY=$$(VAULT_TOKEN="$$VAULT_TOKEN" python3 -c '
+        import json, os, urllib.request
+        req = urllib.request.Request("http://vault:8200/v1/homelab/data/services/authentik", headers={"X-Vault-Token": os.environ["VAULT_TOKEN"]})
+        with urllib.request.urlopen(req) as resp:
+            print(json.load(resp)["data"]["data"]["secret_key"])
+        ')
+
+        export AUTHENTIK_EMAIL__USERNAME=$$(VAULT_TOKEN="$$VAULT_TOKEN" python3 -c '
+        import json, os, urllib.request
+        req = urllib.request.Request("http://vault:8200/v1/homelab/data/services/smtp", headers={"X-Vault-Token": os.environ["VAULT_TOKEN"]})
+        with urllib.request.urlopen(req) as resp:
+            print(json.load(resp)["data"]["data"]["user"])
+        ')
+
+        export AUTHENTIK_EMAIL__PASSWORD=$$(VAULT_TOKEN="$$VAULT_TOKEN" python3 -c '
+        import json, os, urllib.request
+        req = urllib.request.Request("http://vault:8200/v1/homelab/data/services/smtp", headers={"X-Vault-Token": os.environ["VAULT_TOKEN"]})
+        with urllib.request.urlopen(req) as resp:
+            print(json.load(resp)["data"]["data"]["password"])
+        ')
+
+        exec /lifecycle/ak "$$@"
+      - --
+    command: server
+    env_file:
+      - authentik.env
+    environment:
+      # PostgreSQL (external container "postgres")
+      - AUTHENTIK_POSTGRESQL__HOST=${POSTGRES_HOST:-authentik}
+      - AUTHENTIK_POSTGRESQL__USER=${POSTGRES_USER:-authentik}
+      - AUTHENTIK_POSTGRESQL__NAME=${POSTGRES_DB:-authentik}
+
+      # Authentik base settings
+      - AUTHENTIK_ERROR_REPORTING__ENABLED=${ERROR_REPORTING_ENABLED:-false}
+
+      # Mail
+      - AUTHENTIK_EMAIL__HOST=${EMAIL_HOST:?error}
+      - AUTHENTIK_EMAIL__PORT=${EMAIL_PORT:-25}
+      - AUTHENTIK_EMAIL__USE_TLS=${EMAIL_USE_TLS:-false}
+      - AUTHENTIK_EMAIL__USE_SSL=${EMAIL_USE_SSL:-false}
+      - AUTHENTIK_EMAIL__TIMEOUT=${EMAIL_TIMEOUT:-10}
+      - AUTHENTIK_EMAIL__FROM=${EMAIL_FROM:?error}
+
+    labels:
+      # CrowdSec Docker acquisition (scenario firix/authentik-bf)
+      - crowdsec.enable=true
+      - crowdsec.labels.type=authentik
+      - traefik.enable=true
+      - traefik.http.services.authentik.loadbalancer.server.port=9000
+      - traefik.http.services.authentik.loadbalancer.server.scheme=http
+      - traefik.http.routers.authentik.entrypoints=websecure
+      - traefik.http.routers.authentik.rule=Host(`${TRAEFIK_HOST}`)
+      - traefik.http.routers.authentik.tls=true
+      - traefik.http.routers.authentik.tls.certresolver=ipv64
+      - traefik.http.routers.authentik.middlewares=authentik-public-chain@file
+
+    volumes:
+      - /opt/docker/authentik/media:/media
+      - /opt/docker/authentik/custom-templates:/templates
+
+    user: root
+    secrets:
+      - authentik_vault_role_id
+      - authentik_vault_secret_id
+
+    restart: unless-stopped
+    networks:
+      - backend
+      - frontend
+
+  worker:
+    image: ghcr.io/goauthentik/server:${VERSION}
+    container_name: authentik-worker
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        ROLE_ID=$$(cat /run/secrets/authentik_vault_role_id)
+        SECRET_ID=$$(cat /run/secrets/authentik_vault_secret_id)
+
+        # This image (Debian trixie, ghcr.io/goauthentik/server) has neither
+        # curl nor wget -- python3 on the other hand is guaranteed to exist
+        # (Authentik itself is Python/Django), hence urllib instead of an HTTP tool.
+        VAULT_TOKEN=$$(ROLE_ID="$$ROLE_ID" SECRET_ID="$$SECRET_ID" python3 -c '
+        import json, os, urllib.request
+        payload = json.dumps({"role_id": os.environ["ROLE_ID"], "secret_id": os.environ["SECRET_ID"]}).encode()
+        req = urllib.request.Request("http://vault:8200/v1/auth/approle/login", data=payload, method="POST")
+        with urllib.request.urlopen(req) as resp:
+            print(json.load(resp)["auth"]["client_token"])
+        ')
+
+        export AUTHENTIK_POSTGRESQL__PASSWORD=$$(VAULT_TOKEN="$$VAULT_TOKEN" python3 -c '
+        import json, os, urllib.request
+        req = urllib.request.Request("http://vault:8200/v1/homelab/data/databases/postgres", headers={"X-Vault-Token": os.environ["VAULT_TOKEN"]})
+        with urllib.request.urlopen(req) as resp:
+            print(json.load(resp)["data"]["data"]["authentik_password"])
+        ')
+
+        export AUTHENTIK_SECRET_KEY=$$(VAULT_TOKEN="$$VAULT_TOKEN" python3 -c '
+        import json, os, urllib.request
+        req = urllib.request.Request("http://vault:8200/v1/homelab/data/services/authentik", headers={"X-Vault-Token": os.environ["VAULT_TOKEN"]})
+        with urllib.request.urlopen(req) as resp:
+            print(json.load(resp)["data"]["data"]["secret_key"])
+        ')
+
+        export AUTHENTIK_EMAIL__USERNAME=$$(VAULT_TOKEN="$$VAULT_TOKEN" python3 -c '
+        import json, os, urllib.request
+        req = urllib.request.Request("http://vault:8200/v1/homelab/data/services/smtp", headers={"X-Vault-Token": os.environ["VAULT_TOKEN"]})
+        with urllib.request.urlopen(req) as resp:
+            print(json.load(resp)["data"]["data"]["user"])
+        ')
+
+        export AUTHENTIK_EMAIL__PASSWORD=$$(VAULT_TOKEN="$$VAULT_TOKEN" python3 -c '
+        import json, os, urllib.request
+        req = urllib.request.Request("http://vault:8200/v1/homelab/data/services/smtp", headers={"X-Vault-Token": os.environ["VAULT_TOKEN"]})
+        with urllib.request.urlopen(req) as resp:
+            print(json.load(resp)["data"]["data"]["password"])
+        ')
+
+        exec /lifecycle/ak "$$@"
+      - --
+    command: worker
+    env_file:
+      - authentik.env
+    environment:
+      # PostgreSQL (external container)
+      - AUTHENTIK_POSTGRESQL__HOST=${POSTGRES_HOST:-authentik}
+      - AUTHENTIK_POSTGRESQL__USER=${POSTGRES_USER:-authentik}
+      - AUTHENTIK_POSTGRESQL__NAME=${POSTGRES_DB:-authentik}
+
+      # Authentik base settings
+      - AUTHENTIK_ERROR_REPORTING__ENABLED=${ERROR_REPORTING_ENABLED:-false}
+
+      # Mail
+      - AUTHENTIK_EMAIL__HOST=${EMAIL_HOST:?error}
+      - AUTHENTIK_EMAIL__PORT=${EMAIL_PORT:-25}
+      - AUTHENTIK_EMAIL__USE_TLS=${EMAIL_USE_TLS:-false}
+      - AUTHENTIK_EMAIL__USE_SSL=${EMAIL_USE_SSL:-false}
+      - AUTHENTIK_EMAIL__TIMEOUT=${EMAIL_TIMEOUT:-10}
+      - AUTHENTIK_EMAIL__FROM=${EMAIL_FROM:?error}
+
+    user: root
+    volumes:
+      - /run/docker.sock:/run/docker.sock
+      - /opt/docker/authentik/media:/media
+      - /opt/docker/authentik/certs:/certs
+      - /opt/docker/authentik/custom-templates:/templates
+
+    secrets:
+      - authentik_vault_role_id
+      - authentik_vault_secret_id
+
+    restart: unless-stopped
+    networks:
+      - backend
+      - frontend
+
+networks:
+  backend:
+    external: true
+  frontend:
+    external: true

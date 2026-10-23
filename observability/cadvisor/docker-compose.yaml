@@ -1,0 +1,33 @@
+services:
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:${VERSION}
+    container_name: cadvisor
+    env_file:
+      - cadvisor.env
+    privileged: true
+
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.cadvisor-http.rule=Host(`${TRAEFIK_HOST}`)
+      - traefik.http.routers.cadvisor-http.entrypoints=websecure
+      - traefik.http.services.cadvisor.loadbalancer.server.port=8080
+      - traefik.http.routers.cadvisor-http.tls=true
+      - traefik.http.routers.cadvisor-http.tls.certresolver=ipv64
+      - traefik.http.routers.cadvisor-http.middlewares=std-app-internal-chain@file
+
+    restart: unless-stopped
+    networks:
+      - frontend
+      - backend
+networks:
+  frontend:
+    external: true
+  backend:
+    external: true

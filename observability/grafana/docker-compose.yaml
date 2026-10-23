@@ -1,0 +1,70 @@
+---
+include:
+  - /opt/docker/secrets/secrets.yaml
+services:
+  grafana:
+    image: grafana/grafana:${VERSION}
+    container_name: grafana
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        ROLE_ID=$$(cat /run/secrets/grafana_vault_role_id)
+        SECRET_ID=$$(cat /run/secrets/grafana_vault_secret_id)
+        LOGIN_RESPONSE=$$(wget -qO- \
+          --header="Content-Type: application/json" \
+          --post-data="{\"role_id\":\"$$ROLE_ID\",\"secret_id\":\"$$SECRET_ID\"}" \
+          http://vault:8200/v1/auth/approle/login)
+        VAULT_TOKEN=$$(echo "$$LOGIN_RESPONSE" | grep -o '"client_token":"[^"]*"' | cut -d'"' -f4)
+
+        SECRET_RESPONSE=$$(wget -qO- --header="X-Vault-Token: $$VAULT_TOKEN" \
+          http://vault:8200/v1/homelab/data/services/grafana)
+        export GF_SECURITY_ADMIN_PASSWORD=$$(echo "$$SECRET_RESPONSE" | grep -o '"admin_password":"[^"]*"' | cut -d'"' -f4)
+        export GF_AUTH_GENERIC_OAUTH_CLIENT_ID=$$(echo "$$SECRET_RESPONSE" | grep -o '"oauth_client_id":"[^"]*"' | cut -d'"' -f4)
+        export GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET=$$(echo "$$SECRET_RESPONSE" | grep -o '"oauth_client_secret":"[^"]*"' | cut -d'"' -f4)
+
+        exec /run.sh
+      - --
+    env_file:
+      - grafana.env
+    environment:
+      - GF_SERVER_ROOT_URL=https://${TRAEFIK_HOST}
+      - GF_AUTH_GENERIC_OAUTH_ENABLED=true
+      - GF_AUTH_GENERIC_OAUTH_NAME=Authentik
+      - GF_AUTH_GENERIC_OAUTH_SCOPES=openid profile email
+      - GF_AUTH_GENERIC_OAUTH_AUTH_URL=https://${AUTHENTIK_HOST}/application/o/authorize/
+      - GF_AUTH_GENERIC_OAUTH_TOKEN_URL=https://${AUTHENTIK_HOST}/application/o/token/
+      - GF_AUTH_GENERIC_OAUTH_API_URL=https://${AUTHENTIK_HOST}/application/o/userinfo/
+      - GF_AUTH_GENERIC_OAUTH_ALLOW_ASSIGN_GRAFANA_ADMIN=true
+      - GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_PATH=contains(groups[*], 'grafana-admins') && 'GrafanaAdmin' || 'Viewer'
+      # The "Sign in with Authentik" button does not replace Grafana's own login form (it is only an additional option)
+      # as long as GF_AUTH_DISABLE_LOGIN_FORM is not set.
+
+    secrets:
+      - grafana_vault_role_id
+      - grafana_vault_secret_id
+
+    volumes:
+      - /opt/docker/grafana/data:/var/lib/grafana
+      - /opt/docker/grafana/config/provisioning:/etc/grafana/provisioning
+
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.grafana.rule=Host(`${TRAEFIK_HOST}`)
+      - traefik.http.routers.grafana.entrypoints=websecure
+      - traefik.http.routers.grafana.tls=true
+      - traefik.http.routers.grafana.tls.certresolver=ipv64
+      - traefik.http.routers.grafana.middlewares=grafana-chain@file
+      - traefik.http.services.grafana.loadbalancer.server.port=3000
+
+    restart: unless-stopped
+    networks:
+      - frontend
+      - backend
+
+networks:
+  frontend:
+    external: true
+  backend:
+    external: true

@@ -1,0 +1,50 @@
+---
+services:
+  vault:
+    image: hashicorp/vault:${VERSION:?error}
+    container_name: vault
+    restart: unless-stopped
+
+    env_file:
+      - vault.env
+
+    command: [ "vault", "server", "-config=/vault/config/vault.hcl" ]
+
+    cap_add:
+      - IPC_LOCK
+
+    volumes:
+      - /mnt/wd-750/docker/data/vault/data:/vault/data
+      - /opt/docker/vault/config/vault.hcl:/vault/config/vault.hcl:ro
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+
+    networks:
+      - frontend
+      - backend
+
+    security_opt:
+      - no-new-privileges:true
+
+    healthcheck:
+      # exit 0 = unsealed, exit 2 = sealed but running — both are healthy for routing
+      test: [ "CMD", "sh", "-c", "vault status -address=http://localhost:8200;" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.vault.entrypoints=websecure
+      - traefik.http.routers.vault.rule=Host(`${TRAEFIK_HOST}`)
+      - traefik.http.routers.vault.tls=true
+      - traefik.http.routers.vault.tls.certresolver=ipv64
+      - traefik.http.services.vault.loadbalancer.server.port=8200
+      - traefik.http.routers.vault.middlewares=vault-chain@file
+
+networks:
+  frontend:
+    external: true
+  backend:
+    external: true

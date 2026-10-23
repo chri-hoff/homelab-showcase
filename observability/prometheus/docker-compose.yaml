@@ -1,0 +1,48 @@
+---
+services:
+  prometheus:
+    container_name: prometheus
+    image: prom/prometheus:${VERSION:-latest}
+    env_file:
+      - prometheus.env
+    volumes:
+      - /opt/docker/prometheus/data:/prometheus
+      - /opt/docker/prometheus/config:/etc/prometheus:ro
+    user: 1000:1000
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    labels:
+      - traefik.enable=true
+      - traefik.http.services.prom.loadbalancer.server.port=9090
+
+      # --- API endpoints for Grafana & co. (internal + basic auth) ---
+      - traefik.http.routers.prom-api.rule=Host(`${TRAEFIK_HOST}`) && (PathPrefix(`/api`) || PathPrefix(`/-/ready`) || PathPrefix(`/-/healthy`) || PathPrefix(`/metrics`) || PathPrefix(`/federate`))
+      - traefik.http.routers.prom-api.priority=10
+      - traefik.http.routers.prom-api.entrypoints=websecure
+      - traefik.http.routers.prom-api.tls=true
+      - traefik.http.routers.prom-api.tls.certresolver=ipv64
+      - traefik.http.routers.prom-api.middlewares=only-internal@file,prom-basic-auth
+      - traefik.http.routers.prom-api.service=prom
+      - traefik.http.middlewares.prom-basic-auth.basicauth.users=${PROMETHEUS_BASIC_AUTH_USERS}
+
+      # --- Prometheus UI (query, graph, etc.) for admins only ---
+      - traefik.http.routers.prom-ui.rule=Host(`${TRAEFIK_HOST}`) && PathPrefix(`/`)
+      - traefik.http.routers.prom-ui.priority=1
+      - traefik.http.routers.prom-ui.entrypoints=websecure
+      - traefik.http.routers.prom-ui.tls=true
+      - traefik.http.routers.prom-ui.tls.certresolver=ipv64
+      - traefik.http.routers.prom-ui.middlewares=std-adm-internal-chain@file
+      - traefik.http.routers.prom-ui.service=prom
+    restart: unless-stopped
+    networks:
+      - frontend
+      - backend
+
+networks:
+  frontend:
+    external: true
+  backend:
+    external: true

@@ -1,0 +1,67 @@
+# Kestra flow for Issue #72: update approval from Mindwtr, every 5 minutes.
+#
+# Moving an update task in the Mindwtr project "Homelab" to "Next" makes this flow
+# release the update without waiting for the daily check (07:00) or "checkversion":
+#   - target version in Supabase services = newest candidate version
+#   - auto-deploy possible -> task "Waiting"; otherwise "Someday" + Telegram "please update manually"
+#   - only then: export versions.yaml and push to main -> update-on-merge deploys
+# Also: mirror the status, close tasks of finished candidates.
+#
+# Deliberately lean: no Docker Hub check, no inventory, no n8n -- that stays with the
+# daily docker-update-check (which performs the same releases as a safety net).
+# Whether a deploy landed (running_tag) only shows up in the next inventory run.
+#
+# Logic: scripts/supabase/process-candidate.py release, export: commit-versions.sh.
+# Minute 2,7,12,... instead of 0,5,10: never collides with the 07:00 check.
+
+id: update-release
+namespace: homelab
+
+concurrency:
+  behavior: CANCEL
+  limit: 1
+
+triggers:
+  - id: every-5-min
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "2-59/5 * * * *"
+    timezone: Europe/Berlin
+
+tasks:
+  - id: release
+    type: io.kestra.plugin.scripts.shell.Commands
+    taskRunner:
+      type: io.kestra.plugin.scripts.runner.docker.Docker
+      image: homelab-update-runner:latest
+      pullPolicy: NEVER
+      cpu:
+        cpus: "0.5"
+      memory:
+        memory: "256MB"
+      # backend: supabase-envoy and mindwtr-cloud
+      networkMode: backend
+      volumes:
+        - /data/gitea/homelab:/repo:ro
+        # Push of versions.yaml (only on release), as in docker-update-check.yml
+        - /opt/docker/secrets/kestra_git_push_key:/secrets/git_push_key:ro
+        - /home/admin/.ssh/known_hosts:/root/.ssh/known_hosts:ro
+    env:
+      BOT_TOKEN: "{{ secret('TELEGRAM_BOT_TOKEN') }}"
+      CHAT_ID: "{{ secret('TELEGRAM_CHAT_ID') }}"
+      SUPABASE_URL: http://supabase-envoy:8000
+      SUPABASE_ANON_KEY: "{{ secret('SUPABASE_ANON_KEY') }}"
+      SUPABASE_JWT: "{{ secret('SUPABASE_SYNC_JWT') }}"
+      MINDWTR_URL: http://mindwtr-cloud:8787
+      MINDWTR_TOKEN: "{{ secret('MINDWTR_TOKEN') }}"
+      GIT_PUSH_URL: ssh://git@gitea.example.com:2222/owner/homelab.git
+      RELEASE_MARKER: /tmp/released
+    commands:
+      - |
+        cd /repo
+        RC=0
+        python3 scripts/supabase/process-candidate.py release || RC=1
+        if [ -f "$RELEASE_MARKER" ]; then
+          git config --global --add safe.directory /repo
+          sh scripts/supabase/commit-versions.sh || RC=1
+        fi
+        exit $RC

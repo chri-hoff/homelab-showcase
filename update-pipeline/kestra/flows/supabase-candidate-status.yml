@@ -1,0 +1,30 @@
+# Kestra flow for Issue #72, phase 3: target of the Supabase database webhook.
+#
+# Fired by Postgres itself (trigger update_candidates_status_webhook, see
+# services/supabase/migrations/002_update_candidates.sql) whenever the status of an
+# update candidate changes -- manually in Studio, or automatically to "done" once the
+# versions.yaml sync reaches the version.
+#
+# Phase 3: log only, no deploy. Later (#70) e.g. "next" could trigger a
+# branch/PR here.
+#
+# Reachability: supabase-db and kestra only share the supabase-hooks network.
+# Payload (supabase_functions.http_request): {type, table, schema, record, old_record}.
+#
+# The webhook key also appears in the migration -- change both together.
+
+id: supabase-candidate-status
+namespace: homelab
+
+triggers:
+  - id: supabase-db
+    type: io.kestra.plugin.core.trigger.Webhook
+    key: "<KESTRA_WEBHOOK_KEY>"
+
+tasks:
+  - id: log-status-change
+    type: io.kestra.plugin.core.log.Log
+    message: >-
+      update_candidates #{{ trigger.body.record.id }}:
+      {{ trigger.body.record.service }} {{ trigger.body.record.new_version }}
+      Status {{ trigger.body.old_record.status }} -> {{ trigger.body.record.status }}

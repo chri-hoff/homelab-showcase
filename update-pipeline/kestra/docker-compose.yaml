@@ -1,0 +1,137 @@
+include:
+  - /opt/docker/secrets/secrets.yaml
+
+services:
+  kestra:
+    image: kestra/kestra:${VERSION}
+    container_name: kestra
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        ROLE_ID=$$(cat /run/secrets/kestra_vault_role_id)
+        SECRET_ID=$$(cat /run/secrets/kestra_vault_secret_id)
+        LOGIN_RESPONSE=$$(curl -sf -X POST \
+          -d "{\"role_id\":\"$$ROLE_ID\",\"secret_id\":\"$$SECRET_ID\"}" \
+          http://vault:8200/v1/auth/approle/login)
+        VAULT_TOKEN=$$(echo "$$LOGIN_RESPONSE" | grep -o '"client_token":"[^"]*"' | cut -d'"' -f4)
+        SECRET_RESPONSE=$$(curl -sf -H "X-Vault-Token: $$VAULT_TOKEN" \
+          http://vault:8200/v1/homelab/data/databases/postgres)
+        export POSTGRES_PASSWORD=$$(echo "$$SECRET_RESPONSE" | grep -o '"kestra_password":"[^"]*"' | cut -d'"' -f4)
+
+        # Secrets for Kestra's built-in secret() mechanism (see
+        # https://kestra.io/docs/how-to-guides/secrets): it expects base64-
+        # encoded SECRET_<NAME> env vars on the Kestra process itself.
+        # Instead of a static .env_encoded file (Kestra's own suggestion, but
+        # base64 only = no encryption) we fetch the real values live from
+        # Vault, using the token we already have.
+        # The SOPS age key is explicitly NOT handled this way -- it stays with
+        # the per-run fetch in update-on-merge.yml (see the comment there).
+        SECRET_RESPONSE_TG=$$(curl -sf -H "X-Vault-Token: $$VAULT_TOKEN" \
+          http://vault:8200/v1/homelab/data/services/telegram)
+        export SECRET_TELEGRAM_BOT_TOKEN=$$(echo "$$SECRET_RESPONSE_TG" | grep -o '"bot_token":"[^"]*"' | cut -d'"' -f4 | tr -d '\n' | base64 -w0)
+        export SECRET_TELEGRAM_CHAT_ID=$$(echo "$$SECRET_RESPONSE_TG" | grep -o '"chat_id":"[^"]*"' | cut -d'"' -f4 | tr -d '\n' | base64 -w0)
+
+        SECRET_RESPONSE_NC=$$(curl -sf -H "X-Vault-Token: $$VAULT_TOKEN" \
+          http://vault:8200/v1/homelab/data/services/nextcloud-etf)
+        export SECRET_NEXTCLOUD_URL=$$(echo "$$SECRET_RESPONSE_NC" | grep -o '"url":"[^"]*"' | cut -d'"' -f4 | tr -d '\n' | base64 -w0)
+        export SECRET_NEXTCLOUD_USER=$$(echo "$$SECRET_RESPONSE_NC" | grep -o '"user":"[^"]*"' | cut -d'"' -f4 | tr -d '\n' | base64 -w0)
+        export SECRET_NEXTCLOUD_APP_TOKEN=$$(echo "$$SECRET_RESPONSE_NC" | grep -o '"app_token":"[^"]*"' | cut -d'"' -f4 | tr -d '\n' | base64 -w0)
+
+        # Kestra's own REST API requires HTTP basic auth (same credentials as
+        # the web UI login) -- needed by flows that use the built-in
+        # io.kestra.plugin.kestra.executions.Query task type (e.g.
+        # daily-execution-summary.yml) to authenticate against their own
+        # API.
+        SECRET_RESPONSE_KESTRA=$$(curl -sf -H "X-Vault-Token: $$VAULT_TOKEN" \
+          http://vault:8200/v1/homelab/data/services/kestra-api)
+        export SECRET_KESTRA_USERNAME=$$(echo "$$SECRET_RESPONSE_KESTRA" | grep -o '"username":"[^"]*"' | cut -d'"' -f4 | tr -d '\n' | base64 -w0)
+        export SECRET_KESTRA_PASSWORD=$$(echo "$$SECRET_RESPONSE_KESTRA" | grep -o '"password":"[^"]*"' | cut -d'"' -f4 | tr -d '\n' | base64 -w0)
+
+        # Dedicated bearer token for Kestra's access to the Mindwtr sync API
+        # (see services/mindwtr/README.md).
+        SECRET_RESPONSE_MINDWTR=$$(curl -sf -H "X-Vault-Token: $$VAULT_TOKEN" \
+          http://vault:8200/v1/homelab/data/services/mindwtr)
+        export SECRET_MINDWTR_TOKEN=$$(echo "$$SECRET_RESPONSE_MINDWTR" | grep -o '"agent_auth_token":"[^"]*"' | cut -d'"' -f4 | tr -d '\n' | base64 -w0)
+
+        # Supabase stack (Issue #72): anon_key + JWT of the DB role kestra_sync for
+        # docker-update-check.yml. Deliberately tolerant -- if the path is missing
+        # (Supabase not set up/removed), Kestra still starts; only that flow fails.
+        SECRET_RESPONSE_SB=$$(curl -sf -H "X-Vault-Token: $$VAULT_TOKEN" \
+          http://vault:8200/v1/homelab/data/services/supabase-kestra) || SECRET_RESPONSE_SB=""
+        export SECRET_SUPABASE_ANON_KEY=$$(echo "$$SECRET_RESPONSE_SB" | grep -o '"anon_key":"[^"]*"' | cut -d'"' -f4 | tr -d '\n' | base64 -w0)
+        export SECRET_SUPABASE_SYNC_JWT=$$(echo "$$SECRET_RESPONSE_SB" | grep -o '"sync_jwt":"[^"]*"' | cut -d'"' -f4 | tr -d '\n' | base64 -w0)
+
+        # Shared secret for n8n webhooks (header x-webhook-secret), used by
+        # docker-update-check.yml (n8n changelog-summary). n8n reads the same value as
+        # N8N_WEBHOOK_SECRET. Also tolerant: if the path is missing, Kestra still starts.
+        SECRET_RESPONSE_N8N=$$(curl -sf -H "X-Vault-Token: $$VAULT_TOKEN" \
+          http://vault:8200/v1/homelab/data/services/n8n-webhook) || SECRET_RESPONSE_N8N=""
+        export SECRET_N8N_WEBHOOK_SECRET=$$(echo "$$SECRET_RESPONSE_N8N" | grep -o '"webhook_secret":"[^"]*"' | cut -d'"' -f4 | tr -d '\n' | base64 -w0)
+
+        exec /app/kestra "$$@"
+      - --
+    command: server standalone
+    environment:
+      KESTRA_CONFIGURATION: |
+        datasources:
+          postgres:
+            url: jdbc:postgresql://${POSTGRES_HOST:-kestra}/${POSTGRES_DB:-kestra}
+            driverClassName: org.postgresql.Driver
+            username: ${POSTGRES_USER:-kestra}
+            password: $${POSTGRES_PASSWORD}
+        kestra:
+          queue:
+            type: postgres
+          repository:
+            type: postgres
+          storage:
+            type: local
+            local:
+              base-path: /app/storage
+          plugins:
+            configurations:
+              - type: io.kestra.plugin.scripts.runner.docker.Docker
+                values:
+                  volume-enabled: true
+    env_file:
+      - kestra.env
+    secrets:
+      - kestra_vault_role_id
+      - kestra_vault_secret_id
+    # mem_limit: 6g
+    # cpus: 4
+    volumes:
+      - /mnt/wd-750/docker/data/kestra/storage:/app/storage
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /data/backup:/mnt/backup
+    labels:
+      - traefik.enable=true
+      # Required since supabase-hooks: Traefik is not on that network and might otherwise pick its IP
+      - traefik.docker.network=frontend
+      - traefik.http.services.kestra.loadbalancer.server.port=8080
+      - traefik.http.routers.kestra.rule=Host(`${TRAEFIK_HOST}`)
+      - traefik.http.routers.kestra.entrypoints=websecure
+      - traefik.http.routers.kestra.tls=true
+      - traefik.http.routers.kestra.tls.certresolver=ipv64
+      - traefik.http.routers.kestra.middlewares=std-adm-internal-chain@file
+    networks:
+      - frontend
+      - backend
+      - supabase-hooks
+    restart: unless-stopped
+    group_add:
+      - "${DOCKER_GID}"
+
+networks:
+  frontend:
+    external: true
+  backend:
+    external: true
+  # Issue #72: the only path from supabase-db (database webhooks/pg_net) to Kestra.
+  # Created here (not external) so Kestra never depends on Supabase;
+  # services/supabase attaches it as external. internal: no internet access of its own.
+  supabase-hooks:
+    name: supabase-hooks
+    internal: true
