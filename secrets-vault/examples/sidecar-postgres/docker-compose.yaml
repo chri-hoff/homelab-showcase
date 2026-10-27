@@ -2,7 +2,7 @@ include:
   - /opt/docker/secrets/secrets.yaml
 services:
   vault-agent:
-    image: homelab-update-runner:latest
+    image: homelab-vault-agent:1.0
     container_name: postgres-vault-agent
     entrypoint:
       - /bin/sh
@@ -28,6 +28,13 @@ services:
       - postgres-vault-secrets:/vault-secrets
     networks:
       - backend
+    # Hardening (#103): one-shot job as root writing into its own named volume
+    mem_limit: 128m
+    pids_limit: 64
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     restart: "no"
 
   postgres:
@@ -51,6 +58,20 @@ services:
       - /opt/docker/postgres/data:/var/lib/postgresql/data
       - postgres-vault-secrets:/vault-secrets:ro
     restart: unless-stopped
+    # Hardening (#103): entrypoint chowns the datadir as root, then gosu postgres
+    # (one process per connection -> generous pids_limit)
+    mem_limit: 1g
+    pids_limit: 512
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
     networks:
       - backend
 

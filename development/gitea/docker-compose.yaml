@@ -6,6 +6,11 @@ services:
     image: gitea/gitea:${VERSION:?error}
     container_name: gitea
     restart: unless-stopped
+    # Hardening (#103): s6 runs as root -> setup chowns /data, drops to git via
+    # s6-setuidgid (SETUID/SETGID), signals git processes (KILL); bundled openssh
+    # needs SYS_CHROOT for privilege separation
+    mem_limit: 512m
+    pids_limit: 256
 
     entrypoint:
       - /bin/sh
@@ -76,6 +81,16 @@ services:
 
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
+      - SYS_CHROOT
+      - KILL
 
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/"]

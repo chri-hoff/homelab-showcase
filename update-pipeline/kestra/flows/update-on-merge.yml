@@ -1,71 +1,24 @@
-# Kestra flow for Issue #4: Gitea webhook -> sops-auto-update, using the same
-# Docker socket path Kestra already mounts for itself (no new Kestra secret
-# required). The SOPS age private key -- the most sensitive secret in the
-# system, it can decrypt everything -- is NOT stored as a file in the container.
-# It is fetched fresh via Vault AppRole on every run and only exists for the
-# lifetime of this one container.
+# Kestra flow for Issue #4: Gitea push webhook -> deploy changed services.
 #
-# Tested and working (2026-07-31, verified manually via Kestra "Execute" plus a
-# real Gitea test push, against Kestra v1.3.29). Pitfalls hit along the way, in
-# case any of them resurface with the next Kestra upgrade:
+# #100: Kestra no longer touches Docker, git or the SOPS age key. The flow calls
+# "homelab-deploy auto-update" on the host via SSH (forced command, user "deploy",
+# not in group docker): git pull of the host checkout as its owner, then deploy every
+# service whose .env.sops or versions.yaml version changed (same rules as the former
+# sops-auto-update.fish: vault/authentik/traefik/kestra and updateable: false stay
+# manual, new versions.yaml entries are not deployed). The age key is fetched from
+# Vault by the wrapper for the duration of the call only.
 #
-# ADDENDUM: at the end of every run the "finally" task telegram-notify sends a
-# summary via Telegram (same bot/chat as docker-update-check.yml) -- regardless
-# of whether sops-auto-update succeeded. Bot token/chat ID come from Kestra's
-# built-in secret() mechanism ({{ secret('TELEGRAM_BOT_TOKEN') }} etc., see
-# services/kestra/docker-compose.yaml) -- no separate Vault login needed in the
-# task anymore (previously: dedicated AppRole "docker-update-check", now
-# obsolete). sops-auto-update passes its summary to telegram-notify via Kestra's
-# task output syntax ("::{...}::" on stdout), see services/kestra/README.md,
-# section "Telegram summary".
-#   - taskRunner.type: io.kestra.plugin.scripts.runner.docker.Docker (not
-#     io.kestra.plugin.core.runner.Docker)
-#   - Docker volume mounts are disabled server-side by default, see
-#     kestra.plugins.configurations in services/kestra/docker-compose.yaml
-#   - Kestra manages its own working directory, NOT the image WORKDIR
-#     -> hence the explicit "cd /repo" in the command
-#   - /repo is owned by host UID 1000, the container runs as root -> git needs
-#     "safe.directory"
-#   - The container is fresh on every run and has no git user.name/email ->
-#     sops-auto-update.fish uses "git pull --no-edit" (instead of --ff-only),
-#     which creates a real merge commit when histories diverged -- without a
-#     configured identity that fails with "Committer identity unknown", so
-#     user.name/email are set explicitly here (a fake identity is enough, it is
-#     only used for the merge commit)
-#   - origin is an SSH remote -> the host SSH key must be mounted
-#   - Gitea blocks webhooks to internal hosts by default (SSRF protection) ->
-#     add the host to [webhook] ALLOWED_HOST_LIST in Gitea's app.ini
-#   - `docker compose`'s "include:" is parsed CLIENT-side (by the process in the
-#     update-runner container), not by the daemon -> /opt/docker/secrets must
-#     also be mounted 1:1 into the update-runner container, not just the two
-#     role_id/secret_id files
-#   - Telegram accepts at most 4096 characters per message -- a large image
-#     pull (many progress-bar lines in $FISH_OUTPUT despite `--quiet-pull` in
-#     sops-update.fish) can otherwise inflate the summary so much that
-#     telegram-notify fails with HTTP 400 / curl exit 22
-#     -> hence truncation to 3000 characters before sending
-#   - Kestra renders the entire commands text as a Pebble template BEFORE the
-#     shell sees it -> any "{#" in the script (e.g. bash length syntax
-#     "${#VAR}") is read as the start of a Pebble comment "{# #}"
-#     -> "Unclosed comment" ParserException. So the length is computed with
-#     `wc -c` instead of `${#VAR}`; in general avoid "{{", "{%", "{#" in the
-#     script unless meant as a real Pebble tag.
+# Only pushes to main of owner/homelab are processed; everything else (other branches,
+# a manual "Execute" without a payload) ends in the "ignored" branch. For a manual
+# run on the host: sudo homelab-deploy auto-update
 #
-# Prerequisites on the host before importing this flow:
-#   1. Vault: create policy + AppRole "update-runner", store the secret with the
-#      age key (see services/kestra/README.md, section "Update runner").
-#   2. Store role_id/secret_id as Docker secrets (services/secrets/secerts.yaml
-#      already contains update_runner_vault_role_id/_secret_id).
-#   3. Build the helper image: docker build -t homelab-update-runner:latest services/kestra/update-runner
-#   4. Gitea webhook (repo settings -> Webhooks -> Add Webhook -> Gitea):
-#      Target URL:  http://kestra:8080/api/v1/executions/webhook/homelab/update-on-merge/<key from triggers.key>
-#      Trigger On:  Push Events
-#      Branch filter: main
-#      (runs internally over the shared "backend" Docker network, no
-#      Traefik / public exposure required)
-#   5. For telegram-notify: the kestra-ro policy must be allowed to read
-#      homelab/data/services/telegram (see services/kestra/README.md, section
-#      "Docker update check") -- no dedicated secret needed for this task.
+# Telegram summary in "finally" (at most ~4000 characters, see telegram-send.py).
+#
+# Gitea webhook (repo settings -> Webhooks -> Gitea):
+#   Target URL:  http://kestra:8080/api/v1/executions/webhook/homelab/update-on-merge/<triggers.key>
+#   Trigger On:  Push Events, branch filter: main
+#   (internal over the "backend" network; Gitea's [webhook] ALLOWED_HOST_LIST must
+#   allow the host)
 
 id: update-on-merge
 namespace: homelab
@@ -73,100 +26,48 @@ namespace: homelab
 triggers:
   - id: gitea-push-main
     type: io.kestra.plugin.core.trigger.Webhook
-    key: "<KESTRA_WEBHOOK_KEY>"
+    # From Vault (homelab/services/kestra-webhooks, field update_on_merge), #100
+    key: "{{ secret('UPDATE_ON_MERGE_WEBHOOK_KEY') }}"
 
 tasks:
-  - id: sops-auto-update
-    type: io.kestra.plugin.scripts.shell.Commands
-    taskRunner:
-      type: io.kestra.plugin.scripts.runner.docker.Docker
-      image: homelab-update-runner:latest
-      pullPolicy: NEVER
-      cpu:
-        cpus: "1"
-      memory:
-        memory: "512MB"
-      networkMode: backend
-      volumes:
-        - /data/gitea/homelab:/repo
-        - /var/run/docker.sock:/var/run/docker.sock
-        - /opt/docker/secrets/update_runner_vault_role_id.txt:/secrets/role_id
-        - /opt/docker/secrets/update_runner_vault_secret_id.txt:/secrets/secret_id
-        - /opt/docker/secrets:/opt/docker/secrets:ro
-        - /home/admin/.ssh:/root/.ssh:ro
-    commands:
-      - |
-        set -e
-        git config --global --add safe.directory /repo
-        git config --global user.name "Kestra Auto-Update"
-        git config --global user.email "kestra-auto-update@homelab.local"
-        cd /repo
-        ROLE_ID=$(cat /secrets/role_id)
-        SECRET_ID=$(cat /secrets/secret_id)
-        VAULT_TOKEN=$(curl -sf -X POST \
-          -d "{\"role_id\":\"$ROLE_ID\",\"secret_id\":\"$SECRET_ID\"}" \
-          http://vault:8200/v1/auth/approle/login | jq -r '.auth.client_token')
-
-        mkdir -p /root/.config/sops/age
-        curl -sf -H "X-Vault-Token: $VAULT_TOKEN" \
-          http://vault:8200/v1/homelab/data/services/sops-age-key \
-          | jq -r '.data.data.private_key' > /root/.config/sops/age/keys.txt
-        chmod 600 /root/.config/sops/age/keys.txt
-
-        export SOPS_AGE_KEY_FILE=/root/.config/sops/age/keys.txt
-
-        set +e
-        FISH_OUTPUT=$(fish -c "source scripts/functions/sops-update.fish; and source scripts/functions/sops-auto-update.fish; and sops-auto-update" 2>&1)
-        FISH_EXIT=$?
-        set -e
-        echo "$FISH_OUTPUT"
-
-        # The container runs as root -- the git pull above creates new objects
-        # in /repo/.git owned by root (bind mount, same host path as the
-        # interactive admin checkout). Without this chown, root-owned files pile
-        # up and later break interactive git commands on the host with
-        # permission errors.
-        chown -R 1000:1000 /repo/.git || true
-
-        # Telegram allows at most 4096 characters per message -- for very long
-        # output (e.g. Docker pull progress despite --quiet-pull) keep only the
-        # last 3000 characters, otherwise telegram-notify fails with a 400
-        # before any message gets through.
-        MAX_LEN=3000
-        FISH_OUTPUT_LEN=$(printf '%s' "$FISH_OUTPUT" | wc -c)
-        if [ "$FISH_OUTPUT_LEN" -gt "$MAX_LEN" ]; then
-          FISH_OUTPUT=$(printf '[...gekuerzt...]\n%s' "$(printf '%s' "$FISH_OUTPUT" | tail -c "$MAX_LEN")")
-        fi
-
-        if [ "$FISH_EXIT" -eq 0 ]; then
-          PREFIX="update-on-merge OK"
-        else
-          PREFIX="update-on-merge FEHLGESCHLAGEN (exit $FISH_EXIT)"
-        fi
-        SUMMARY=$(printf '%s\n\n%s' "$PREFIX" "$FISH_OUTPUT")
-
-        echo "::{\"outputs\":{\"summary\":$(printf '%s' "$SUMMARY" | jq -Rs .)}}::"
-
-        exit "$FISH_EXIT"
+  - id: only-main
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ (trigger.body.ref | default('')) == 'refs/heads/main' and (trigger.body.repository.full_name | default('')) == 'owner/homelab' }}"
+    then:
+      - id: auto-update
+        type: io.kestra.plugin.fs.ssh.Command
+        # #100: the only path to Docker -- homelab-deploy on the host (forced command)
+        host: 172.22.0.1
+        username: deploy
+        authMethod: PUBLIC_KEY
+        privateKey: "{{ secret('DEPLOY_SSH_KEY') }}"
+        timeout: PT30M
+        commands:
+          - auto-update
+    else:
+      - id: ignored
+        type: io.kestra.plugin.core.log.Log
+        message: "Kein Push auf main von owner/homelab ({{ trigger.body.ref | default('ohne Payload') }}) -- nichts zu tun."
 
 finally:
   - id: telegram-notify
     type: io.kestra.plugin.scripts.shell.Commands
     taskRunner:
-      type: io.kestra.plugin.scripts.runner.docker.Docker
-      image: homelab-update-runner:latest
-      pullPolicy: NEVER
-      cpu:
-        cpus: "1"
-      memory:
-        memory: "512MB"
+      type: io.kestra.plugin.core.runner.Process
     env:
       BOT_TOKEN: "{{ secret('TELEGRAM_BOT_TOKEN') }}"
       CHAT_ID: "{{ secret('TELEGRAM_CHAT_ID') }}"
-      SUMMARY: "{{ outputs['sops-auto-update'].vars.summary | default('update-on-merge: kein Output von sops-auto-update erhalten -- vermutlich vor der Zusammenfassung abgestuerzt, siehe Kestra-Logs.') }}"
+      REF: "{{ trigger.body.ref | default('') }}"
+      REPORT: "{{ outputs['auto-update'].vars.report | default('') }}"
     commands:
       - |
         set -e
-        jq -n --arg chat_id "$CHAT_ID" --arg text "$SUMMARY" '{chat_id: $chat_id, text: $text}' \
-          | curl -sf -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
-            -H "Content-Type: application/json" -d @-
+        [ "$REF" = "refs/heads/main" ] || exit 0
+        if [ -z "$REPORT" ]; then
+          MSG="update-on-merge FEHLGESCHLAGEN -- kein Bericht, siehe Kestra-Logs"
+        elif printf '%s' "$REPORT" | grep -qE '^(FEHLER|docker compose up fehlgeschlagen)'; then
+          MSG=$(printf 'update-on-merge mit Fehlern\n\n%s' "$REPORT")
+        else
+          MSG=$(printf 'update-on-merge OK\n\n%s' "$REPORT")
+        fi
+        printf '%s' "$MSG" | python3 /repo/scripts/kestra/telegram-send.py

@@ -3,7 +3,7 @@ services:
     image: louislam/uptime-kuma:${VERSION}
     container_name: uptime-kuma
     restart: unless-stopped
-    mem_limit: 512m
+    mem_limit: 768m
     mem_reservation: 256m
     cpus: "1.0"
 
@@ -15,17 +15,31 @@ services:
 
     volumes:
       - /opt/docker/uptime-kuma/data:/app/data
-      - /var/run/docker.sock:/var/run/docker.sock:ro
 
     networks:
       - frontend
       - backend
+      # Docker host "ThinkCentre" in the UI: tcp://docker-socket-proxy:2375 (#100 STEP 6)
+      - socket-proxy
 
+    # Hardening (#103): runs as root; entrypoint does chown on /app/data and
+    # setpriv --clear-groups -> CHOWN/SETUID/SETGID; chmod on /app/data/mariadb
+    # (not owned by root) -> FOWNER. Health check comes with the image.
+    pids_limit: 256
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - FOWNER
 
     labels:
       - traefik.enable=true
+      # Several networks incl. socket-proxy -> pin the one Traefik routes over
+      - traefik.docker.network=frontend
 
       # Public status page: /status/* AND the shared SPA assets/APIs the status
       # page needs to render (same JS bundle as the dashboard, Vite builds asset
@@ -51,4 +65,6 @@ networks:
   frontend:
     external: true
   backend:
+    external: true
+  socket-proxy:
     external: true

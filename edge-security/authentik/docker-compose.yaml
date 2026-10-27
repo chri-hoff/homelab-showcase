@@ -91,7 +91,17 @@ services:
       - /opt/docker/authentik/media:/media
       - /opt/docker/authentik/custom-templates:/templates
 
-    user: root
+    # Hardening (#103/#100 STEP 7): runs as the image user authentik (1000), not root.
+    # Only the embedded outpost is used (no Docker integration) -> no docker.sock,
+    # no chown/chpst at startup -> no capabilities. /media and /certs belong to 1000,
+    # the Vault AppRole files in /opt/docker/secrets are 640 root:1000.
+    # Health check comes with the image.
+    mem_limit: 1536m
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     secrets:
       - authentik_vault_role_id
       - authentik_vault_secret_id
@@ -173,9 +183,15 @@ services:
       - AUTHENTIK_EMAIL__TIMEOUT=${EMAIL_TIMEOUT:-10}
       - AUTHENTIK_EMAIL__FROM=${EMAIL_FROM:?error}
 
-    user: root
+    # Hardening (#103/#100 STEP 7): same as the server -- user authentik, no
+    # docker.sock (no managed outposts), no capabilities. Health check from the image.
+    mem_limit: 1g
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     volumes:
-      - /run/docker.sock:/run/docker.sock
       - /opt/docker/authentik/media:/media
       - /opt/docker/authentik/certs:/certs
       - /opt/docker/authentik/custom-templates:/templates

@@ -1,0 +1,25 @@
+## Audit watches for files whose change is a security event (Issue #123).
+## Installed to /etc/audit/rules.d/homelab.rules by apply-auditd.sh.
+## -p wa = write or attribute change; every record carries key "homelab-critical",
+## which the Grafana rule "Kritische Datei geändert" matches on (auditd syslog plugin ->
+## journal -> Alloy -> Loki).
+
+# Privilege escalation
+-w /etc/sudoers -p wa -k homelab-critical
+-w /etc/sudoers.d/ -p wa -k homelab-critical
+
+# Remote access
+-w /etc/ssh/sshd_config -p wa -k homelab-critical
+-w /etc/ssh/sshd_config.d/ -p wa -k homelab-critical
+-w /root/.ssh/ -p wa -k homelab-critical
+-w /home/admin/.ssh/authorized_keys -p wa -k homelab-critical
+-w /var/lib/deploy/.ssh/ -p wa -k homelab-critical
+
+# Deploy path and Docker daemon (#100, #103)
+-w /usr/local/bin/homelab-deploy -p wa -k homelab-critical
+-w /etc/docker/daemon.json -p wa -k homelab-critical
+
+# Persistence
+-w /etc/crontab -p wa -k homelab-critical
+-w /etc/cron.d/ -p wa -k homelab-critical
+-w /etc/systemd/system/ -p wa -k homelab-critical

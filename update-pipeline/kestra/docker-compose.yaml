@@ -70,6 +70,21 @@ services:
           http://vault:8200/v1/homelab/data/services/n8n-webhook) || SECRET_RESPONSE_N8N=""
         export SECRET_N8N_WEBHOOK_SECRET=$$(echo "$$SECRET_RESPONSE_N8N" | grep -o '"webhook_secret":"[^"]*"' | cut -d'"' -f4 | tr -d '\n' | base64 -w0)
 
+        # #100: SSH key for homelab-deploy (flows reach the host only through that
+        # wrapper) and the Gitea token for scripts/supabase/commit-versions.py.
+        # python3 instead of grep: the private key is multi-line (\n escapes in JSON).
+        # Tolerant like the Supabase secrets: Kestra starts even if a path is missing.
+        vault_b64() {
+          curl -sf -H "X-Vault-Token: $$VAULT_TOKEN" "http://vault:8200/v1/homelab/data/services/$$1" \
+            | python3 -c 'import base64,json,sys; print(base64.b64encode(json.load(sys.stdin)["data"]["data"][sys.argv[1]].encode()).decode())' "$$2" \
+            || true
+        }
+        export SECRET_DEPLOY_SSH_KEY=$$(vault_b64 kestra-deploy-ssh private_key)
+        export SECRET_GITEA_TOKEN=$$(vault_b64 kestra-gitea token)
+        # Webhook key of update-on-merge (Gitea push), referenced in the flow as
+        # secret() instead of a literal key in the repository
+        export SECRET_UPDATE_ON_MERGE_WEBHOOK_KEY=$$(vault_b64 kestra-webhooks update_on_merge)
+
         exec /app/kestra "$$@"
       - --
     command: server standalone
@@ -90,22 +105,20 @@ services:
             type: local
             local:
               base-path: /app/storage
-          plugins:
-            configurations:
-              - type: io.kestra.plugin.scripts.runner.docker.Docker
-                values:
-                  volume-enabled: true
     env_file:
       - kestra.env
     secrets:
       - kestra_vault_role_id
       - kestra_vault_secret_id
-    # mem_limit: 6g
+    mem_limit: 6g
     # cpus: 4
     volumes:
       - /mnt/wd-750/docker/data/kestra/storage:/app/storage
-      - /var/run/docker.sock:/var/run/docker.sock
       - /data/backup:/mnt/backup
+      # #100: flows run in this container (Process runner) instead of task containers:
+      # repo scripts read-only, state of telegram-listener
+      - /data/gitea/homelab:/repo:ro
+      - /data/kestra-state:/state
     labels:
       - traefik.enable=true
       # Required since supabase-hooks: Traefik is not on that network and might otherwise pick its IP
@@ -117,12 +130,26 @@ services:
       - traefik.http.routers.kestra.tls.certresolver=ipv64
       - traefik.http.routers.kestra.middlewares=std-adm-internal-chain@file
     networks:
-      - frontend
-      - backend
-      - supabase-hooks
+      frontend:
+      # Fixed address: homelab-deploy's authorized_keys only accepts this source (#100)
+      backend:
+        ipv4_address: 172.22.0.250
+      supabase-hooks:
     restart: unless-stopped
-    group_add:
-      - "${DOCKER_GID}"
+    # Hardening (#103/#100): runs as UID 1000, needs no capabilities. No Docker socket:
+    # flows run in this container (Process runner) and reach the host only via SSH to
+    # homelab-deploy (forced command). JVM threads count as PIDs.
+    pids_limit: 1024
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 180s
 
 networks:
   frontend:

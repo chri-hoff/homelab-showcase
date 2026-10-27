@@ -7,6 +7,10 @@ services:
     image: vaultwarden/server:${VERSION}
     container_name: vaultwarden
     restart: unless-stopped
+    # Hardening (#103): root, data dir owned by root -> no capabilities (port 80
+    # needs none, Docker sets ip_unprivileged_port_start=0). Health check comes with the image.
+    mem_limit: 256m
+    pids_limit: 128
 
     secrets:
       - vaultwarden_vault_role_id
@@ -67,6 +71,8 @@ services:
 
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
 
     labels:
       - traefik.enable=true

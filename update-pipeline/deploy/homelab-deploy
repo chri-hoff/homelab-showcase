@@ -1,0 +1,205 @@
+#!/bin/bash
+# homelab-deploy -- the only way Kestra may change containers on this host (#100).
+#
+# Installed root-owned to /usr/local/bin/homelab-deploy by install-homelab-deploy.sh.
+# The SSH user "deploy" (NOT in group docker) may run exactly this script via sudo;
+# its authorized_keys entry forces it as command, so the action comes from
+# SSH_ORIGINAL_COMMAND (kept through sudo via env_keep). Locally an admin can run
+# "sudo homelab-deploy <action> [arg]" for tests.
+#
+# Actions (fixed list, nothing else is accepted):
+#   deploy <service>   redeploy one service from the host checkout (versions.yaml + .env.sops)
+#   auto-update        git pull of the host checkout, then deploy every service whose
+#                      .env.sops or versions.yaml version changed (replaces the old
+#                      sops-auto-update run inside the Kestra task container)
+#   ps                 docker ps --format json (inventory for the update check)
+#   update-check       scripts/docker/docker-update-check.sh (registry lookups for all
+#                      running images)
+#   backup-mariadb     scripts/backup/backup_mariadb.sh
+#   trivy-scan         scripts/security/trivy-scan.sh
+#
+# Results that Kestra needs as data are printed additionally as a Kestra outputs line
+# (::{"outputs":{...}}::), which the SSH Command task turns into outputs.vars.
+#
+# Every call is logged to the journal with tag "homelab-deploy".
+set -uo pipefail
+
+REPO=/data/gitea/homelab
+REPO_USER=admin
+SECRETS=/opt/docker/secrets
+# Never deployed through this path: Vault starts sealed, Authentik/Traefik are the
+# login and the ingress, Kestra would kill its own running flow.
+EXCLUDED="vault authentik traefik kestra"
+
+# SSH_* only count for the deploy user (sudo keeps them for every caller, so an
+# admin running "sudo homelab-deploy" from an SSH session would otherwise be
+# logged with the SSH client address and the forced-command path).
+if [ "${SUDO_USER:-}" = deploy ] && [ -n "${SSH_ORIGINAL_COMMAND:-}" ]; then
+  CALLER="ssh:${SSH_CLIENT%% *}"
+  read -r ACTION ARG EXTRA <<<"$SSH_ORIGINAL_COMMAND"
+else
+  CALLER="local:${SUDO_USER:-$(id -un)}"
+  ACTION=${1:-}; ARG=${2:-}; EXTRA=${3:-}
+fi
+
+log() { logger -t homelab-deploy "caller=$CALLER action=$ACTION arg=${ARG:--} $*"; }
+die() { echo "FEHLER: $*" >&2; log "result=rejected reason=\"$*\""; exit 2; }
+
+[ -z "${EXTRA:-}" ] || die "zu viele Argumente"
+[ "$(id -u)" -eq 0 ] || die "muss als root laufen (sudo)"
+
+exec 9>/run/lock/homelab-deploy.lock
+flock -w 600 9 || die "anderer Deploy läuft noch (Lock)"
+
+WORK=$(mktemp -d /run/homelab-deploy.XXXXXX)
+chmod 700 "$WORK"
+# Decrypted .env files live next to the compose file only during "compose up";
+# the trap also removes them if the call is interrupted.
+ENVFILES=()
+trap 'rm -f "${ENVFILES[@]}"; rm -rf "$WORK"' EXIT
+
+as_repo_user() { runuser -u "$REPO_USER" -- "$@"; }
+# git as the checkout owner (root would trip over safe.directory and leave
+# root-owned objects behind)
+rgit() { as_repo_user git -C "$REPO" "$@"; }
+
+# Age key for sops: fetched from Vault with the update-runner AppRole, kept only in
+# the tmpfs work dir for the duration of this call.
+age_key() {
+  [ -s "$WORK/age.txt" ] && return 0
+  local vault role secret token
+  vault=$(docker inspect vault --format '{{.NetworkSettings.Networks.backend.IPAddress}}') || return 1
+  role=$(cat "$SECRETS/update_runner_vault_role_id.txt")
+  secret=$(cat "$SECRETS/update_runner_vault_secret_id.txt")
+  token=$(curl -sf -X POST -d "{\"role_id\":\"$role\",\"secret_id\":\"$secret\"}" \
+            "http://$vault:8200/v1/auth/approle/login" \
+          | python3 -c 'import json,sys; print(json.load(sys.stdin)["auth"]["client_token"])') || return 1
+  curl -sf -H "X-Vault-Token: $token" "http://$vault:8200/v1/homelab/data/services/sops-age-key" \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["data"]["private_key"])' \
+    > "$WORK/age.txt" || return 1
+  [ -s "$WORK/age.txt" ]
+}
+
+compose_file() {
+  local n
+  for n in docker-compose.yaml docker-compose.yml compose.yaml compose.yml; do
+    [ -f "$REPO/services/$1/$n" ] && { echo "$REPO/services/$1/$n"; return 0; }
+  done
+  return 1
+}
+
+deploy_service() {
+  local svc=$1 compose envfile version rc
+  [[ $svc =~ ^[a-z0-9][a-z0-9-]*$ ]] || { echo "ungültiger Service-Name: $svc"; return 2; }
+  for x in $EXCLUDED; do
+    [ "$svc" = "$x" ] && { echo "SKIP: $svc ist ausgenommen -- bitte manuell deployen"; return 3; }
+  done
+  compose=$(compose_file "$svc") || { echo "SKIP: keine Compose-Datei für $svc"; return 3; }
+  envfile="$REPO/services/$svc/$svc.env"
+  [ -f "$envfile.sops" ] || { echo "SKIP: keine $svc.env.sops"; return 3; }
+
+  version=$(yq -r ".services.\"$svc\".version // \"\"" "$REPO/config/versions.yaml")
+  [ "$version" = "latest" ] && { echo "FEHLER: $svc steht auf latest"; return 1; }
+
+  age_key || { echo "FEHLER: age-Key nicht aus Vault lesbar"; return 1; }
+  ENVFILES+=("$envfile")
+  ( umask 077; SOPS_AGE_KEY_FILE="$WORK/age.txt" sops --decrypt --input-type dotenv \
+      --output-type dotenv "$envfile.sops" > "$envfile" ) || { rm -f "$envfile"; echo "FEHLER: sops"; return 1; }
+  if [ -z "$version" ] && grep -qx 'VERSION=latest' "$envfile"; then
+    rm -f "$envfile"; echo "FEHLER: VERSION=latest in $svc.env"; return 1
+  fi
+
+  echo "==> deploy $svc ${version:-(VERSION aus .env)}"
+  if [ -n "$version" ]; then
+    VERSION=$version docker compose --env-file "$envfile" -f "$compose" up -d --force-recreate --quiet-pull 2>&1
+  else
+    docker compose --env-file "$envfile" -f "$compose" up -d --force-recreate --quiet-pull 2>&1
+  fi
+  rc=$?
+  rm -f "$envfile"
+  return $rc
+}
+
+auto_update() {
+  local before after svc rc=0 changed
+  before=$(rgit rev-parse HEAD)
+  rgit pull --ff-only 2>&1 || { echo "FEHLER: git pull (kein Fast-Forward?)"; return 1; }
+  after=$(rgit rev-parse HEAD)
+  [ "$before" = "$after" ] && { echo "Keine Änderungen -- nichts zu tun."; return 0; }
+
+  # Secret changes: services/<svc>/<svc>.env.sops added or modified
+  changed=$(rgit diff --name-only --diff-filter=AM "$before" "$after" -- 'services/*/*.env.sops' \
+            | cut -d/ -f2)
+  # Version bumps: existing entries whose version changed and that are updateable
+  if rgit diff --quiet "$before" "$after" -- config/versions.yaml; then :; else
+    for svc in $(yq -r '.services | keys | .[]' "$REPO/config/versions.yaml"); do
+      local vb va
+      vb=$(rgit show "$before:config/versions.yaml" | yq -r ".services.\"$svc\".version // \"\"")
+      va=$(yq -r ".services.\"$svc\".version" "$REPO/config/versions.yaml")
+      [ "$vb" = "$va" ] && continue
+      if [ -z "$vb" ]; then echo "Neu in versions.yaml: $svc ($va) -- kein Deploy"; continue; fi
+      if [ "$(yq -r ".services.\"$svc\".updateable" "$REPO/config/versions.yaml")" = "false" ]; then
+        echo "SKIP: $svc hat updateable: false ($vb -> $va) -- bitte manuell deployen"; continue
+      fi
+      echo "Versions-Update: $svc ($vb -> $va)"
+      changed="$changed $svc"
+    done
+  fi
+
+  local r
+  for svc in $(printf '%s\n' $changed | sort -u); do
+    deploy_service "$svc"; r=$?
+    [ $r -eq 1 ] || [ $r -eq 2 ] && rc=1
+  done
+  return $rc
+}
+
+# Print one Kestra outputs line: kestra_output <name> <file> [<name> <file> ...]
+# (own line after a newline -- Kestra only picks it up at the start of a line)
+kestra_output() {
+  python3 -c 'import json,sys
+a = sys.argv[1:]
+print("\n::" + json.dumps({"outputs": {a[i]: open(a[i + 1]).read() for i in range(0, len(a), 2)}}) + "::")' "$@"
+}
+
+# Run a script, show its output live and keep it as "report" for Kestra
+run_report() {
+  "$@" 2>&1 | tee "$WORK/report.txt"
+  return "${PIPESTATUS[0]}"
+}
+
+no_arg() { [ -z "$ARG" ] || die "$ACTION hat kein Argument"; }
+
+case "$ACTION" in
+  deploy)
+    [ -n "$ARG" ] || die "deploy braucht einen Service-Namen"
+    run_report deploy_service "$ARG"; RC=$?
+    kestra_output report "$WORK/report.txt" ;;
+  auto-update)
+    no_arg
+    run_report auto_update; RC=$?
+    kestra_output report "$WORK/report.txt" ;;
+  ps)
+    no_arg
+    docker ps --format json > "$WORK/ps.json"; RC=$?
+    cat "$WORK/ps.json"
+    kestra_output containers "$WORK/ps.json" ;;
+  update-check)
+    no_arg
+    : > "$WORK/updates.jsonl"
+    UPDATE_CHECK_JSON="$WORK/updates.jsonl" run_report bash "$REPO/scripts/docker/docker-update-check.sh"; RC=$?
+    kestra_output report "$WORK/report.txt" updates "$WORK/updates.jsonl" ;;
+  backup-mariadb)
+    no_arg
+    run_report bash "$REPO/scripts/backup/backup_mariadb.sh"; RC=$?
+    kestra_output report "$WORK/report.txt" ;;
+  trivy-scan)
+    no_arg
+    run_report bash "$REPO/scripts/security/trivy-scan.sh"; RC=$?
+    kestra_output report "$WORK/report.txt" ;;
+  *)
+    die "unbekannte Aktion '${ACTION}' (erlaubt: deploy <service>, auto-update, ps, update-check, backup-mariadb, trivy-scan)" ;;
+esac
+
+log "result=rc$RC"
+exit $RC

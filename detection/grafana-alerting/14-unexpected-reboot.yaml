@@ -1,0 +1,51 @@
+# Host rebooted within the last 10 minutes (node exporter boot time changed).
+# Grafana alert rule, provisioning format (Issue #123). One file = one rule = one
+# evaluation group. Templates use {{ .Labels.x }} instead of
+# $labels: provisioning files interpolate $VARIABLES from the environment.
+apiVersion: 1
+groups:
+    - orgId: 1
+      name: unexpected-reboot
+      folder: Admins
+      interval: 10s
+      rules:
+        - uid: cg2i3adparksgb
+          title: "Unerwarteter Neustart"
+          condition: C
+          data:
+            - refId: A
+              relativeTimeRange:
+                from: 600
+                to: 0
+              datasourceUid: bfu5x8zzwhekga
+              model:
+                editorMode: code
+                expr: "changes(node_boot_time_seconds[10m])"
+                instant: true
+                range: false
+                refId: A
+            - refId: C
+              queryType: expression
+              datasourceUid: __expr__
+              model:
+                type: threshold
+                expression: A
+                conditions:
+                    - evaluator:
+                        params:
+                            - 0
+                        type: gt
+                      type: query
+                refId: C
+          noDataState: OK
+          execErrState: Error
+          for: 0s
+          annotations:
+            summary: "Neustart von {{ .Labels.instance }}"
+            description: "Falls nicht geplant: last -x reboot | head; sudo journalctl -b -1 -n 50 (Ende des vorigen Boots)"
+          isPaused: false
+          notification_settings:
+            receiver: Telegram
+            group_wait: 0s
+            group_interval: 1m
+            repeat_interval: 4h

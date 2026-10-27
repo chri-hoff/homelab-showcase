@@ -51,9 +51,3 @@ scrape_configs:
         labels:
           instance: 'Pi5'   # change to the node exporter's hostname
 
-  - job_name: watchtower
-    scrape_interval: 100s
-    metrics_path: /v1/metrics
-    bearer_token: SeCret_TOKEN
-    static_configs:
-      - targets: ["watchtower:8080"]

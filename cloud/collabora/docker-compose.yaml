@@ -15,6 +15,20 @@ services:
     image: collabora/code:${VERSION}
     container_name: collabora
     restart: unless-stopped
+    # Hardening (#103): runs as UID 1001; coolforkit-caps carries file capabilities
+    # (chown/fowner/sys_chroot/mknod) for the jails -> those must stay in the bounding set.
+    # no-new-privileges stays off (see header comment) -- explicitly, because the
+    # Docker daemon sets it as default (scripts/security/docker-daemon.json).
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:false
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - FOWNER
+      - SYS_CHROOT
+      - MKNOD
     mem_limit: 2g
     mem_reservation: 1g
     cpus: "2.0"

@@ -16,7 +16,8 @@ for sops-update = directory under services/).
   with the stack's name exists (table bundles), the entry is assigned to it.
 - not seen for 7 days -> deleted (candidates go with it via FK).
 
-Kestra task containers (homelab-update-runner, alpine, label kestra.io/*) are ignored.
+Ephemeral containers (former Kestra task runners, vault-agent sidecars, alpine, label
+kestra.io/*) are ignored.
 Environment: see supabase_api.py.
 """
 
@@ -31,7 +32,7 @@ from supabase_api import request
 
 # like version_pattern() in docker-update-check.sh: 2-3 parts or more (Collabora: 26.04.5.1.1)
 CHECKABLE = re.compile(r"^v?\d+(\.\d+)+$")
-EPHEMERAL_IMAGES = {"homelab-update-runner", "alpine"}
+EPHEMERAL_IMAGES = {"homelab-update-runner", "homelab-vault-agent", "alpine"}
 # Never deploy automatically: Kestra/Vault/Traefik as before, plus the Supabase core
 # without which the pipeline itself (inventory, candidates, export) stops working.
 PROTECTED = {"kestra", "vault", "traefik", "supabase-db", "supabase-rest", "supabase-api-gw"}

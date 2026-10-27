@@ -89,6 +89,7 @@ uses the same pattern for all of its services.
 | `vault/` | Vault compose file and `vault.hcl` |
 | `examples/direct-entrypoint-vaultwarden/` | pattern 1 |
 | `examples/sidecar-mariadb/`, `examples/sidecar-postgres/` | pattern 2 |
+| `vault-agent/Dockerfile` | the sidecars' image: Alpine with curl and jq, nothing else |
 | `scripts/vault-unseal.fish` | interactive unseal helper |
 | `scripts/check_vault_sealed.sh` | cron-based seal alert via Telegram |
 

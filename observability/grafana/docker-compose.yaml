@@ -48,6 +48,9 @@ services:
     volumes:
       - /opt/docker/grafana/data:/var/lib/grafana
       - /opt/docker/grafana/config/provisioning:/etc/grafana/provisioning
+      # Alert rules as code (#123): versioned in the repo, loaded at startup, read-only
+      # in the UI. Mounted over the alerting subdirectory of the host provisioning dir.
+      - ./provisioning/alerting:/etc/grafana/provisioning/alerting:ro
 
     labels:
       - traefik.enable=true
@@ -59,6 +62,21 @@ services:
       - traefik.http.services.grafana.loadbalancer.server.port=3000
 
     restart: unless-stopped
+
+    # Hardening (#103): image runs as UID 472, needs no capabilities
+    mem_limit: 1g
+    pids_limit: 512
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
     networks:
       - frontend
       - backend

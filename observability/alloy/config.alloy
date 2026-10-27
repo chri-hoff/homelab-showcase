@@ -2,7 +2,7 @@
 // 1) DOCKER LOGS 
 // ========================== 
 discovery.docker "containers" { 
-  host             = "unix:///var/run/docker.sock" 
+  host             = "tcp://docker-socket-proxy:2375" 
   refresh_interval = "5s" 
 } 
  
@@ -47,7 +47,7 @@ discovery.relabel "docker_logs" {
 } 
  
 loki.source.docker "docker" { 
-  host       = "unix:///var/run/docker.sock" 
+  host       = "tcp://docker-socket-proxy:2375" 
   targets    = discovery.relabel.docker_logs.output 
   forward_to = [loki.write.default.receiver] 
 } 
@@ -68,15 +68,22 @@ loki.process "journal" {
       unit      = "_SYSTEMD_UNIT",
       priority  = "_PRIORITY",
       hostname  = "_HOSTNAME",
+      ident     = "SYSLOG_IDENTIFIER",
     }
   }
 
+  // stage.labels maps label -> name of an extracted field (not a literal value);
+  // "job = systemd" / "host = constants.hostname" used to produce empty labels.
+  // host now comes from the journal's _HOSTNAME (the real host, not the container);
+  // job keeps the automatic value loki.source.journal.journal, which existing alert
+  // rules (SSH-Login) match on.
   stage.labels {
     values = {
-      job      = "systemd",
-      host     = constants.hostname,
+      host     = "hostname",
       unit     = "unit",
       priority = "priority",
+      // e.g. homelab-deploy (logger -t) for the deploy alert (#100 STEP 9)
+      syslog_identifier = "ident",
     }
   }
 

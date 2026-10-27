@@ -3,7 +3,7 @@ include:
   - /opt/docker/secrets/secrets.yaml
 services:
   reverse-proxy:
-    image: traefik:${VERSION:-latest}
+    image: traefik:${VERSION}
     container_name: traefik
     entrypoint:
       - /bin/sh
@@ -49,7 +49,6 @@ services:
     volumes:
       - /opt/docker/traefik/config/conf:/etc/traefik/conf
       - /opt/docker/traefik/config/traefik.yaml:/etc/traefik/traefik.yaml:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
       # Optional: ACME storage, if you point it to /letsencrypt/acme.json in traefik.yaml
       - /opt/docker/traefik/letsencrypt:/letsencrypt
       - /opt/docker/traefik/logs/:/var/log/traefik
@@ -65,9 +64,28 @@ services:
     networks:
       - frontend
       - backend
+      # Docker API only via the read-only proxy (#100 STEP 6); traefik.yaml:
+      # providers.docker.endpoint: "tcp://docker-socket-proxy:2375"
+      - socket-proxy
     restart: unless-stopped
+    # Hardening (#103): root, writes only root-owned files (acme.json, logs);
+    # ports 80/443 need no capability (Docker sets ip_unprivileged_port_start=0)
+    mem_limit: 512m
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:8082/metrics"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 networks:
    frontend:
       external: true
    backend:
+      external: true
+   socket-proxy:
       external: true

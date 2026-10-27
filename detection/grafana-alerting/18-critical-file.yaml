@@ -1,0 +1,57 @@
+# A watched file was changed: sudoers, sshd config, authorized_keys, the deploy wrapper,
+# Docker's daemon.json, cron and systemd units (scripts/security/homelab-audit.rules,
+# installed by apply-auditd.sh). auditd -> journald -> Alloy -> Loki.
+# Grafana alert rule, provisioning format (Issue #123). One file = one rule = one
+# evaluation group. Templates use {{ .Labels.x }} instead of
+# $labels: provisioning files interpolate $VARIABLES from the environment.
+apiVersion: 1
+groups:
+    - orgId: 1
+      name: critical-file
+      folder: Admins
+      interval: 10s
+      rules:
+        - uid: dg3k7critfile01a
+          title: "Kritische Datei geändert"
+          condition: C
+          data:
+            - refId: A
+              queryType: instant
+              relativeTimeRange:
+                from: 600
+                to: 0
+              datasourceUid: dfu95v5rjgf7kc
+              model:
+                datasource:
+                    type: loki
+                    uid: dfu95v5rjgf7kc
+                editorMode: code
+                expr: "sum by (comm, exe) (count_over_time({job=\"loki.source.journal.journal\"} |= \"key=\\\"homelab-critical\\\"\" | regexp \"comm=\\\"(?P<comm>[^\\\"]+)\\\" exe=\\\"(?P<exe>[^\\\"]+)\\\"\" [5m]))"
+                instant: true
+                queryType: instant
+                refId: A
+            - refId: C
+              queryType: expression
+              datasourceUid: __expr__
+              model:
+                type: threshold
+                expression: A
+                conditions:
+                    - evaluator:
+                        params:
+                            - 0
+                        type: gt
+                      type: query
+                refId: C
+          noDataState: OK
+          execErrState: Error
+          for: 0s
+          annotations:
+            summary: "Kritische Datei geändert durch {{ .Labels.comm }} ({{ .Labels.exe }})"
+            description: "Welche Datei: sudo ausearch -k homelab-critical -i | tail -40"
+          isPaused: false
+          notification_settings:
+            receiver: Telegram
+            group_wait: 0s
+            group_interval: 10s
+            repeat_interval: 4h

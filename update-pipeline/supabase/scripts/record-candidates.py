@@ -30,6 +30,7 @@ def norm(image):
 
 def ver(s):
     """Same numeric comparison as in docker-update-check.sh."""
+    s = re.sub(r"-sha-[0-9a-f]+$", "", s or "")
     nums = re.findall(r"\d+", s)
     return [int(x) for x in nums] if nums else [0]
 

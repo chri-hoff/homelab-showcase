@@ -1,0 +1,56 @@
+# Kernel OOM kill. For containers the kernel logs "Memory cgroup out of memory"
+# (lower case) -> (?i).
+# Grafana alert rule, provisioning format (Issue #123). One file = one rule = one
+# evaluation group. Templates use {{ .Labels.x }} instead of
+# $labels: provisioning files interpolate $VARIABLES from the environment.
+apiVersion: 1
+groups:
+    - orgId: 1
+      name: oom
+      folder: Admins
+      interval: 10s
+      rules:
+        - uid: cg2i3l4lvksg0f
+          title: "Speicherabbrüche (OOM)"
+          condition: C
+          data:
+            - refId: A
+              queryType: instant
+              relativeTimeRange:
+                from: 600
+                to: 0
+              datasourceUid: dfu95v5rjgf7kc
+              model:
+                datasource:
+                    type: loki
+                    uid: dfu95v5rjgf7kc
+                editorMode: code
+                expr: "sum by (process) (count_over_time({syslog_identifier=\"kernel\"} |~ \"(?i)out of memory\" | regexp \"Killed process \\\\d+ \\\\((?P<process>[^)]+)\\\\)\" [5m]))"
+                instant: true
+                queryType: instant
+                refId: A
+            - refId: C
+              queryType: expression
+              datasourceUid: __expr__
+              model:
+                type: threshold
+                expression: A
+                conditions:
+                    - evaluator:
+                        params:
+                            - 0
+                        type: gt
+                      type: query
+                refId: C
+          noDataState: OK
+          execErrState: Error
+          for: 0s
+          annotations:
+            summary: "OOM: Kernel hat {{ .Labels.process }} beendet (Speicherlimit erreicht)"
+            description: "Prüfen: docker stats --no-stream; docker ps -a --filter status=exited"
+          isPaused: false
+          notification_settings:
+            receiver: Telegram
+            group_wait: 0s
+            group_interval: 1m
+            repeat_interval: 4h

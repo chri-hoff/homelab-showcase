@@ -1,0 +1,46 @@
+# Read-only Docker API for Traefik (service discovery), Uptime Kuma (container
+# monitors) and Alloy (log discovery) -- #100 STEP 6. Only this container mounts
+# the Docker socket; the consumers reach it as tcp://docker-socket-proxy:2375 on
+# the internal network "socket-proxy", which only they join. Everything except
+# GET on the enabled sections is rejected (POST=0).
+#
+# Note: CONTAINERS=1 includes "inspect", which shows container environments --
+# that is why the network is limited to the three consumers instead of backend.
+services:
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:${VERSION}
+    container_name: docker-socket-proxy
+    restart: unless-stopped
+    env_file:
+      - docker-socket-proxy.env
+    environment:
+      CONTAINERS: 1
+      EVENTS: 1
+      INFO: 1
+      NETWORKS: 1
+      PING: 1
+      VERSION: 1
+      POST: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    # Hardening (#103/#100): haproxy as root, the socket belongs to root -> no
+    # capabilities needed. Health check against the proxied /_ping.
+    mem_limit: 64m
+    pids_limit: 64
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:2375/_ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - socket-proxy
+
+networks:
+  socket-proxy:
+    name: socket-proxy
+    internal: true

@@ -1,0 +1,54 @@
+# Sustained high outbound traffic on the uplink (possible data exfiltration).
+# for: 15m so that a large backup upload does not fire immediately; adjust the
+# threshold (bytes/s) to the upload bandwidth.
+# Grafana alert rule, provisioning format (Issue #123). One file = one rule = one
+# evaluation group. Templates use {{ .Labels.x }} instead of $labels: provisioning files
+# interpolate $VARIABLES from the environment. .Values only holds reduce/math expressions,
+# not the query itself (.Values.A is nil here) -- so the summary names the threshold.
+apiVersion: 1
+groups:
+    - orgId: 1
+      name: outbound-traffic
+      folder: Admins
+      interval: 10s
+      rules:
+        - uid: ag2i3fwx28kjkc
+          title: "Ungewöhnlich viel ausgehender Traffic"
+          condition: C
+          data:
+            - refId: A
+              relativeTimeRange:
+                from: 600
+                to: 0
+              datasourceUid: bfu5x8zzwhekga
+              model:
+                editorMode: code
+                expr: "rate(node_network_transmit_bytes_total{device=\"eno1\"}[5m])"
+                instant: true
+                range: false
+                refId: A
+            - refId: C
+              queryType: expression
+              datasourceUid: __expr__
+              model:
+                type: threshold
+                expression: A
+                conditions:
+                    - evaluator:
+                        params:
+                            - 20000000
+                        type: gt
+                      type: query
+                refId: C
+          noDataState: OK
+          execErrState: Error
+          for: 15m
+          annotations:
+            summary: "Ausgehender Traffic über 20 MB/s auf {{ .Labels.instance }} seit 15 Minuten"
+            description: "Prüfen: welcher Container sendet (Grafana cAdvisor-Dashboard, Netzwerk TX), läuft gerade ein Backup?"
+          isPaused: false
+          notification_settings:
+            receiver: Telegram
+            group_wait: 0s
+            group_interval: 1m
+            repeat_interval: 4h

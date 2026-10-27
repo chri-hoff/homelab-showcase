@@ -2,18 +2,34 @@
 services:
   prometheus:
     container_name: prometheus
-    image: prom/prometheus:${VERSION:-latest}
+    image: prom/prometheus:${VERSION}
     env_file:
       - prometheus.env
     volumes:
       - /opt/docker/prometheus/data:/prometheus
       - /opt/docker/prometheus/config:/etc/prometheus:ro
     user: 1000:1000
+    # Hardening (#103): non-root, needs no capabilities
+    mem_limit: 3g
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
       - '--web.console.libraries=/usr/share/prometheus/console_libraries'
       - '--web.console.templates=/usr/share/prometheus/consoles'
+    # TRAEFIK_HOST is a .lan name (no ACME certificate possible) -> plain HTTP on the
+    # "web" entrypoint, like the other .lan admin UIs (traefik.lan). With websecure the
+    # Authentik callback (http://prometheus.lan/outpost.goauthentik.io/...) hit no router.
     labels:
       - traefik.enable=true
       - traefik.http.services.prom.loadbalancer.server.port=9090
@@ -21,9 +37,7 @@ services:
       # --- API endpoints for Grafana & co. (internal + basic auth) ---
       - traefik.http.routers.prom-api.rule=Host(`${TRAEFIK_HOST}`) && (PathPrefix(`/api`) || PathPrefix(`/-/ready`) || PathPrefix(`/-/healthy`) || PathPrefix(`/metrics`) || PathPrefix(`/federate`))
       - traefik.http.routers.prom-api.priority=10
-      - traefik.http.routers.prom-api.entrypoints=websecure
-      - traefik.http.routers.prom-api.tls=true
-      - traefik.http.routers.prom-api.tls.certresolver=ipv64
+      - traefik.http.routers.prom-api.entrypoints=web
       - traefik.http.routers.prom-api.middlewares=only-internal@file,prom-basic-auth
       - traefik.http.routers.prom-api.service=prom
       - traefik.http.middlewares.prom-basic-auth.basicauth.users=${PROMETHEUS_BASIC_AUTH_USERS}
@@ -31,9 +45,7 @@ services:
       # --- Prometheus UI (query, graph, etc.) for admins only ---
       - traefik.http.routers.prom-ui.rule=Host(`${TRAEFIK_HOST}`) && PathPrefix(`/`)
       - traefik.http.routers.prom-ui.priority=1
-      - traefik.http.routers.prom-ui.entrypoints=websecure
-      - traefik.http.routers.prom-ui.tls=true
-      - traefik.http.routers.prom-ui.tls.certresolver=ipv64
+      - traefik.http.routers.prom-ui.entrypoints=web
       - traefik.http.routers.prom-ui.middlewares=std-adm-internal-chain@file
       - traefik.http.routers.prom-ui.service=prom
     restart: unless-stopped

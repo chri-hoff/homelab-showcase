@@ -11,7 +11,8 @@
 # daily docker-update-check (which performs the same releases as a safety net).
 # Whether a deploy landed (running_tag) only shows up in the next inventory run.
 #
-# Logic: scripts/supabase/process-candidate.py release, export: commit-versions.sh.
+# Logic: scripts/supabase/process-candidate.py release, export: commit-versions.py
+# (Gitea API, #100).
 # Minute 2,7,12,... instead of 0,5,10: never collides with the 07:00 check.
 
 id: update-release
@@ -31,20 +32,7 @@ tasks:
   - id: release
     type: io.kestra.plugin.scripts.shell.Commands
     taskRunner:
-      type: io.kestra.plugin.scripts.runner.docker.Docker
-      image: homelab-update-runner:latest
-      pullPolicy: NEVER
-      cpu:
-        cpus: "0.5"
-      memory:
-        memory: "256MB"
-      # backend: supabase-envoy and mindwtr-cloud
-      networkMode: backend
-      volumes:
-        - /data/gitea/homelab:/repo:ro
-        # Push of versions.yaml (only on release), as in docker-update-check.yml
-        - /opt/docker/secrets/kestra_git_push_key:/secrets/git_push_key:ro
-        - /home/admin/.ssh/known_hosts:/root/.ssh/known_hosts:ro
+      type: io.kestra.plugin.core.runner.Process
     env:
       BOT_TOKEN: "{{ secret('TELEGRAM_BOT_TOKEN') }}"
       CHAT_ID: "{{ secret('TELEGRAM_CHAT_ID') }}"
@@ -53,15 +41,17 @@ tasks:
       SUPABASE_JWT: "{{ secret('SUPABASE_SYNC_JWT') }}"
       MINDWTR_URL: http://mindwtr-cloud:8787
       MINDWTR_TOKEN: "{{ secret('MINDWTR_TOKEN') }}"
-      GIT_PUSH_URL: ssh://git@gitea.example.com:2222/owner/homelab.git
-      RELEASE_MARKER: /tmp/released
+      # versions.yaml is committed through the Gitea API (#100, no git/SSH key here)
+      GITEA_URL: http://gitea:3000
+      GITEA_REPO: owner/homelab
+      GITEA_TOKEN: "{{ secret('GITEA_TOKEN') }}"
     commands:
       - |
+        export RELEASE_MARKER="$(pwd)/released"
         cd /repo
         RC=0
         python3 scripts/supabase/process-candidate.py release || RC=1
         if [ -f "$RELEASE_MARKER" ]; then
-          git config --global --add safe.directory /repo
-          sh scripts/supabase/commit-versions.sh || RC=1
+          python3 scripts/supabase/commit-versions.py || RC=1
         fi
         exit $RC

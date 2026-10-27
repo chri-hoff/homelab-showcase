@@ -1,0 +1,38 @@
+# Justified gaps for scripts/security/check-container-hardening.py (Issue #103).
+#
+# Format:  <service dir>/<compose service>:
+#            <check>: "<reason>"
+# Checks:  no-new-privileges, cap_drop, pids_limit, mem_limit, healthcheck, not-privileged, pinned
+#
+# An exception for a check that passes (or for a container that no longer
+# exists) is reported as stale and fails the check, so this list stays current.
+
+collabora/collabora:
+  no-new-privileges: "Jail isolation needs the file capabilities of coolforkit-caps/coolmount, which no-new-privileges would neutralize"
+  healthcheck: "HEALTHCHECK defined in the image (coolwsd --probe)"
+
+# Health check is defined in the image (docker ps shows "(healthy)")
+filebrowser/filebrowser:
+  healthcheck: "HEALTHCHECK defined in the image"
+homepage/homepage:
+  healthcheck: "HEALTHCHECK defined in the image"
+uptime-kuma/uptime-kuma:
+  healthcheck: "HEALTHCHECK defined in the image"
+
+# vault-agent sidecars: one-shot jobs (restart: "no"), exit after writing the secret files
+mariadb/vault-agent:
+  healthcheck: "One-shot job; dependents wait for service_completed_successfully"
+postgres/vault-agent:
+  healthcheck: "One-shot job; dependents wait for service_completed_successfully"
+cadvisor/cadvisor:
+  healthcheck: "HEALTHCHECK defined in the image"
+loki/loki:
+  healthcheck: "Distroless image without shell or HTTP client; monitored externally by an Uptime Kuma HTTP check on http://loki:3100/ready"
+supabase/vault-agent:
+  healthcheck: "One-shot job; dependents wait for service_completed_successfully"
+vaultwarden/vaultwarden:
+  healthcheck: "HEALTHCHECK defined in the image"
+authentik/server:
+  healthcheck: "HEALTHCHECK defined in the image"
+authentik/worker:
+  healthcheck: "HEALTHCHECK defined in the image"

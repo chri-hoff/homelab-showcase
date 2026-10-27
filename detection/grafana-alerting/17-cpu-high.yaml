@@ -1,0 +1,52 @@
+# Sustained CPU usage above 90 % for 15 minutes on a host -- the classic sign of a
+# crypto miner (or a runaway container). Usage = 1 - idle share, averaged over all cores.
+# Grafana alert rule, provisioning format (Issue #123). One file = one rule = one
+# evaluation group. Templates use {{ .Labels.x }} instead of
+# $labels: provisioning files interpolate $VARIABLES from the environment.
+apiVersion: 1
+groups:
+    - orgId: 1
+      name: cpu-high
+      folder: Admins
+      interval: 10s
+      rules:
+        - uid: dg3k7cpuhigh01a
+          title: "Dauerhaft hohe CPU-Last"
+          condition: C
+          data:
+            - refId: A
+              relativeTimeRange:
+                from: 600
+                to: 0
+              datasourceUid: bfu5x8zzwhekga
+              model:
+                editorMode: code
+                expr: "1 - avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\"}[5m]))"
+                instant: true
+                range: false
+                refId: A
+            - refId: C
+              queryType: expression
+              datasourceUid: __expr__
+              model:
+                type: threshold
+                expression: A
+                conditions:
+                    - evaluator:
+                        params:
+                            - 0.9
+                        type: gt
+                      type: query
+                refId: C
+          noDataState: OK
+          execErrState: Error
+          for: 15m
+          annotations:
+            summary: "CPU über 90 % auf {{ .Labels.instance }} seit 15 Minuten"
+            description: "Prüfen: docker stats --no-stream (welcher Container), top -o %CPU auf dem Host"
+          isPaused: false
+          notification_settings:
+            receiver: Telegram
+            group_wait: 0s
+            group_interval: 1m
+            repeat_interval: 4h

@@ -8,6 +8,9 @@ services:
     container_name: mindwtr-cloud
     hostname: mindwtr-cloud
     restart: unless-stopped
+    # Hardening (#103): image runs as UID 1000, needs no capabilities
+    mem_limit: 512m
+    pids_limit: 128
 
     secrets:
       - mindwtr_vault_role_id
@@ -87,6 +90,8 @@ services:
 
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
 
     labels:
       - traefik.enable=true

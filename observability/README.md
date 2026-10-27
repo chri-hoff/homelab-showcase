@@ -11,12 +11,14 @@ flowchart LR
     end
     subgraph Logs
         DL["Docker logs"] --> A["Grafana Alloy"]
+        SP["docker-socket-proxy<br/>(read-only API)"] -. "container discovery" .-> A
         J["systemd journal<br/>(ssh, sudo, ...)"] --> A
         BL["backup log files"] --> A
         A --> L["Loki"]
     end
     P --> G["Grafana"]
     L --> G
+    G -. "alert rules" .-> TG(["Telegram"])
     UK["Uptime Kuma"] -. "HTTP/TCP checks" .-> SVC(["services"])
 ```
 
@@ -27,8 +29,9 @@ flowchart LR
 | **Prometheus** (`prometheus/`) | Scrapes cAdvisor, Traefik and node exporters | API for Grafana: internal networks + basic auth. UI: trusted networks + Authentik |
 | **Grafana** (`grafana/`) | Dashboards for Prometheus and Loki. Datasources are provisioned from a file, admin password from Vault | Internal networks, "Sign in with Authentik" via OAuth |
 | **Loki** (`loki/`) | Log storage on the filesystem, 7-day retention | Internal networks + basic auth for pushes from other hosts |
-| **Alloy** (`alloy/`) | Collects Docker container logs (with container labels), the systemd journal and the backup scripts' log files, then pushes them to Loki | UI: trusted networks + Authentik |
-| **cAdvisor** (`cadvisor/`) | Per-container CPU, memory and network metrics | Internal networks |
+| **Alloy** (`alloy/`) | Collects Docker container logs (with container labels; discovery through the read-only socket proxy, no socket mount), the systemd journal and the backup scripts' log files, then pushes them to Loki | UI: trusted networks + Authentik |
+| **cAdvisor** (`cadvisor/`) | Per-container CPU, memory and network metrics; runs without `privileged` | Internal networks |
+| **node exporter** (`node-exporter/`) | Host metrics (CPU, memory, disks, network); runs as `nobody`, read-only, no capabilities | Docker network only, no published port |
 | **Uptime Kuma** (`uptime-kuma/`) | Availability checks plus a status page | Dashboard: trusted networks + Authentik. Status page: internal networks, no login |
 
 ## Details worth copying
@@ -37,7 +40,15 @@ flowchart LR
   (`backup/nextcloud-borg/`) and labels them per job, so a failed backup shows up in Grafana
   next to the container logs.
 - **The systemd journal is the important source.** SSH logins and sudo usage only exist there,
-  not in any container log.
+  not in any container log. Alloy turns `SYSLOG_IDENTIFIER` into a label (`syslog_identifier`),
+  which makes alert queries simple. Note that `stage.labels` maps label names to *extracted
+  fields*; a literal like `job = "systemd"` silently produces an empty label.
+- **Security alerts from the journal and node exporter** (Grafana alerting to Telegram): SSH
+  logins (except the deploy wrapper's own logins from Kestra), failed sudo, user/group changes,
+  AppArmor denials, OOM kills, unexpected reboots, unusual outbound traffic, and calls of the
+  deploy wrapper that do not come from Kestra. Queries use `count_over_time` with `regexp`
+  labels, so the message can name the user, source IP or killed process. Rules, rationale and
+  test runbook: [detection](../detection/).
 - **Uptime Kuma behind a path-split router:** the status page and the dashboard are the same
   single-page app. The status page needs the shared JS bundle and API paths from the root, so
   Traefik routes `/status/*` *plus* those shared paths to a less restricted chain, and

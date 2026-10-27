@@ -18,7 +18,7 @@ include:
   - /opt/docker/secrets/secrets.yaml
 services:
   vault-agent:
-    image: homelab-update-runner:latest
+    image: homelab-vault-agent:1.0
     container_name: supabase-vault-agent
     entrypoint:
       - /bin/sh
@@ -90,6 +90,13 @@ services:
       - supabase-vault-secrets:/vault-secrets
     networks:
       - backend
+    # Hardening (#103): one-shot job as root writing into its own named volume
+    mem_limit: 128m
+    pids_limit: 64
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     restart: "no"
 
   db:
@@ -98,6 +105,18 @@ services:
     restart: unless-stopped
     mem_limit: 1g
     cpus: "1.0"
+    # Hardening (#103): entrypoint chowns the datadir as root, then drops to postgres
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
     depends_on:
       vault-agent:
         condition: service_completed_successfully
@@ -154,6 +173,17 @@ services:
     restart: unless-stopped
     mem_limit: 256m
     cpus: "0.5"
+    # Hardening (#103): root, writes nothing -> no capabilities; TCP health check via node
+    pids_limit: 64
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('net').connect(8080, '127.0.0.1').on('connect', () => process.exit(0)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
     depends_on:
       db:
         condition: service_healthy
@@ -178,6 +208,12 @@ services:
     restart: unless-stopped
     mem_limit: 768m
     cpus: "1.0"
+    # Hardening (#103): root, snippets dir is owned by root -> no capabilities
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     depends_on:
       meta:
         condition: service_started
@@ -224,6 +260,12 @@ services:
     restart: unless-stopped
     mem_limit: 128m
     cpus: "0.5"
+    # Hardening (#103): image runs as UID 1000, needs no capabilities
+    pids_limit: 64
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     depends_on:
       db:
         condition: service_healthy
@@ -266,6 +308,12 @@ services:
     restart: unless-stopped
     mem_limit: 128m
     cpus: "0.5"
+    # Hardening (#103): image runs as UID 1000, needs no capabilities
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     depends_on:
       db:
         condition: service_healthy
@@ -297,6 +345,17 @@ services:
     restart: unless-stopped
     mem_limit: 512m
     cpus: "1.0"
+    # Hardening (#103): run.sh runs migrations/seeds via sudo -u nobody
+    # -> SETUID/SETGID, AUDIT_WRITE for sudo's audit message
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETUID
+      - SETGID
+      - AUDIT_WRITE
     depends_on:
       db:
         condition: service_healthy
@@ -341,6 +400,12 @@ services:
     restart: unless-stopped
     mem_limit: 128m
     cpus: "0.5"
+    # Hardening (#103): root, writes only its own /etc/envoy/lds.yaml -> no capabilities
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     depends_on:
       studio:
         condition: service_healthy

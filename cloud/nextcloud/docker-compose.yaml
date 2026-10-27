@@ -98,6 +98,20 @@ services:
       - traefik.http.routers.nextcloud-https.middlewares=nc-wellknown1,nc-wellknown2,nextcloud-chain@file
 
     restart: unless-stopped
+    # Hardening (#103): entrypoint (root) works on www-data owned dirs (750) and
+    # runs occ/rsync via su www-data; apache master (root) signals its www-data workers
+    pids_limit: 512
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
+      - KILL
     networks:
       - frontend
       - backend

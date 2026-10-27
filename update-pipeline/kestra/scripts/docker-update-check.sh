@@ -55,12 +55,18 @@ def parse_image(image_str):
         # unknown registry → skip
         return None, None, None, None
 
+# Release tags "YYYY.MM.DD-sha-<commit>" (Supabase Studio); only the date is compared
+DATE_SHA = re.compile(r'^\d{4}\.\d{2}\.\d{2}-sha-[0-9a-f]+$')
+
 def version_pattern(tag):
     """Derives a search pattern for newer versions from the current tag."""
     # v3.7 → ^v3\.\d+(\.\d+)?$
     # 11.4 → ^11\.\d+(\.\d+)?$
     # 17.2 → ^17(\.\d+)?$
     # 26.04.5.1.1 → ^26(\.\d+){4}$  (more than 3 parts, e.g. Collabora: part count stays fixed)
+    # 2026.09.07-sha-7996410 → date + commit (Supabase Studio): any newer date counts
+    if DATE_SHA.match(tag):
+        return DATE_SHA.pattern
     m = re.match(r'^(v?)(\d+)((?:\.\d+)+)$', tag)
     if not m:
         return None
@@ -89,7 +95,7 @@ def get_latest_tags(namespace, image, pattern, n=5):
             break
     return sorted(
         all_tags,
-        key=lambda v: [int(x) for x in re.findall(r'\d+', v)],
+        key=ver,
         reverse=True
     )[:n]
 
@@ -126,11 +132,13 @@ def get_latest_tags_ghcr(namespace, image, pattern, n=5):
 
     return sorted(
         all_tags,
-        key=lambda v: [int(x) for x in re.findall(r'\d+', v)],
+        key=ver,
         reverse=True
     )[:n]
 
 def ver(s):
+    # "-sha-<commit>" holds digits too -- they must not take part in the comparison
+    s = re.sub(r'-sha-[0-9a-f]+$', '', s)
     nums = re.findall(r'\d+', s)
     return [int(x) for x in nums] if nums else [0]
 

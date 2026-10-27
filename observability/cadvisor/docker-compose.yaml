@@ -1,10 +1,25 @@
 services:
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:${VERSION}
+    # gcr.io/cadvisor/cadvisor stopped at v0.55.1; releases continue on ghcr.io (tags
+    # without "v" exist for every release, with "v" only from 0.57 on).
+    image: ghcr.io/google/cadvisor:${VERSION}
     container_name: cadvisor
     env_file:
       - cadvisor.env
-    privileged: true
+    # Hardening (#103, STEP 6): instead of privileged -- read-only mounts plus
+    # DAC_READ_SEARCH (walk container layers owned by other UIDs) and /dev/kmsg +
+    # SYSLOG for OOM-kill events. Health check comes with the image.
+    mem_limit: 1280m
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - DAC_READ_SEARCH
+      - SYSLOG
+    devices:
+      - /dev/kmsg
 
     volumes:
       - /:/rootfs:ro

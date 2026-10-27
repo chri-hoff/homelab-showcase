@@ -1,7 +1,7 @@
 ---
 services:
   adguard:
-    image: docker.io/adguard/adguardhome:${VERSION:-latest}
+    image: docker.io/adguard/adguardhome:${VERSION}
     restart: unless-stopped
     container_name: adguard
     env_file:
@@ -19,10 +19,26 @@ services:
     volumes:
       - adguard_work:/opt/adguardhome/work
       - adguard_conf:/opt/adguardhome/conf
+    # Hardening (#103): DNS only, DHCP is done by the router -> no NET_ADMIN/NET_RAW.
+    # The AdGuardHome binary carries the file capability cap_net_bind_service=eip, so
+    # exec needs NET_BIND_SERVICE in the bounding set. Runs as root, but the conf/work
+    # volumes are owned by nobody (65534) -> DAC_OVERRIDE for writing AdGuardHome.yaml.
+    # Health check against the web UI (port 80).
+    mem_limit: 512m
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     cap_add:
-      - NET_ADMIN
       - NET_BIND_SERVICE
-      - NET_RAW
+      - DAC_OVERRIDE
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:80/login.html"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     labels:
       - traefik.enable=true
       - traefik.docker.network=frontend

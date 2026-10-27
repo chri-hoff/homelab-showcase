@@ -2,7 +2,7 @@ include:
   - /opt/docker/secrets/secrets.yaml
 services:
   vault-agent:
-    image: homelab-update-runner:latest
+    image: homelab-vault-agent:1.0
     container_name: mariadb-vault-agent
     entrypoint:
       - /bin/sh
@@ -29,6 +29,13 @@ services:
       - mariadb-vault-secrets:/vault-secrets
     networks:
       - backend
+    # Hardening (#103): one-shot job as root writing into its own named volume
+    mem_limit: 128m
+    pids_limit: 64
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     restart: "no"
 
   mariadb:
@@ -58,6 +65,18 @@ services:
       start_period: 15s
     # mem_limit instead of deploy.resources: deploy.resources is not enforced without Swarm
     mem_limit: 2g
+    # Hardening (#103): entrypoint chowns the datadir as root, then gosu mysql
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
     logging:
       driver: json-file
       options:

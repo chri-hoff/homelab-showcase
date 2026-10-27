@@ -12,10 +12,10 @@ services:
     notes: ""
 
   alloy:
-    version: "latest"
+    version: "v1.21.2"
     image: "grafana/alloy"
     stack: "alloy"
-    last_updated: "2026-10-19"
+    last_updated: "2026-10-27"
     updateable: true
     breaking_changes: false
     notes: "automatisch erkannt (Check-Lauf)"
@@ -30,28 +30,46 @@ services:
     notes: ""
 
   cadvisor:
-    version: "latest"
+    version: "0.60.6"
+    image: "ghcr.io/google/cadvisor"
+    stack: "cadvisor"
+    last_updated: "2026-10-27"
+    updateable: true
+    breaking_changes: false
+    notes: "automatisch erkannt (Check-Lauf)"
+
+  cadvisor-cadvisor:
+    version: "v0.55.1"
     image: "gcr.io/cadvisor/cadvisor"
     stack: "cadvisor"
-    last_updated: "2026-10-19"
+    last_updated: "2026-10-27"
     updateable: true
     breaking_changes: false
     notes: "automatisch erkannt (Check-Lauf)"
 
   collabora:
-    version: "26.04.5.1.1"
+    version: "26.04.5.2.1"
     image: "collabora/code"
     stack: "collabora"
-    last_updated: "2026-10-21"
+    last_updated: "2026-10-24"
     updateable: true
     breaking_changes: false
     notes: "automatisch erkannt (Check-Lauf)"
 
+  docker-socket-proxy:
+    version: "v0.5.0"
+    image: "tecnativa/docker-socket-proxy"
+    stack: "docker-socket-proxy"
+    last_updated: null
+    updateable: true
+    breaking_changes: false
+    notes: "Socket-Proxy, #100 STEP 6"
+
   duplicati:
-    version: "latest"
+    version: "2.4.0.1"
     image: "duplicati/duplicati"
     stack: "duplicati"
-    last_updated: "2026-10-19"
+    last_updated: "2026-10-27"
     updateable: true
     breaking_changes: false
     notes: "automatisch erkannt (Check-Lauf)"
@@ -66,10 +84,10 @@ services:
     notes: ""
 
   grafana:
-    version: "13.2.4"
+    version: "13.3.0"
     image: "grafana/grafana"
     stack: "grafana"
-    last_updated: "2026-10-15"
+    last_updated: "2026-10-27"
     updateable: true
     breaking_changes: false
     notes: "regular update"
@@ -111,10 +129,10 @@ services:
     notes: "regular update"
 
   n8n:
-    version: "2.45.2"
+    version: "2.46.0"
     image: "n8nio/n8n"
     stack: "n8n"
-    last_updated: "2026-10-23"
+    last_updated: "2026-10-27"
     updateable: true
     breaking_changes: false
     notes: "regular update"
@@ -128,6 +146,15 @@ services:
     breaking_changes: false
     notes: "Security update"
 
+  nodeexp:
+    version: "v1.12.1"
+    image: "prom/node-exporter"
+    stack: "nodeexp"
+    last_updated: "2026-10-27"
+    updateable: true
+    breaking_changes: false
+    notes: "automatisch erkannt (Check-Lauf)"
+
   postgres:
     version: "17.11"
     image: "docker.io/library/postgres"
@@ -138,10 +165,10 @@ services:
     notes: ""
 
   prometheus:
-    version: "latest"
+    version: "v3.15.1"
     image: "prom/prometheus"
     stack: "prometheus"
-    last_updated: "2026-10-19"
+    last_updated: "2026-10-27"
     updateable: true
     breaking_changes: false
     notes: "automatisch erkannt (Check-Lauf)"
@@ -226,10 +253,10 @@ services:
     notes: ""
 
   uptime-kuma:
-    version: "2.5.7"
+    version: "2.5.8"
     image: "louislam/uptime-kuma"
     stack: "uptime-kuma"
-    last_updated: "2026-10-23"
+    last_updated: "2026-10-26"
     updateable: true
     breaking_changes: false
     notes: "regular update"

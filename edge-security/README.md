@@ -9,6 +9,7 @@ flowchart LR
     FW --> T["Traefik<br/>TLS via ACME DNS challenge"]
     T --> MW["Middleware chain per service:<br/>IP allowlist -> security headers -><br/>rate limit -> CrowdSec plugin -> Authentik"]
     MW --> S["Service container"]
+    SP["docker-socket-proxy<br/>(GET only)"] -. "routing labels" .-> T
     T -. "JSON access log" .-> CS["CrowdSec engine<br/>(+ custom 401 scenario)"]
     CS -. "decisions" .-> FW
     CS -. "decisions" .-> MW
@@ -17,7 +18,8 @@ flowchart LR
 ## Traefik
 
 - **Static config** (`traefik/traefik.yaml`): entrypoints `web`/`websecure`, a separate
-  `metrics` entrypoint for Prometheus, the Docker provider with `exposedByDefault: false`, and
+  `metrics` entrypoint for Prometheus, the Docker provider with `exposedByDefault: false` (it
+  reads the Docker API through a read-only socket proxy, not a socket mount), and
   the file provider for the middlewares. Certificates come from Let's Encrypt via a DNS
   challenge, so no port has to be open for the ACME check.
 - **Trusted proxies:** `X-Forwarded-For` is only accepted from the VPN range and the Docker
@@ -47,7 +49,8 @@ rate limit + CrowdSec (public, the app has its own strong auth), `vault-chain` =
 Self-hosted SSO (`authentik/`). Traefik's forward-auth middleware sends unauthenticated users to
 the Authentik outpost. Grafana also uses Authentik as an OAuth provider. Server and worker fetch
 their secrets from Vault at startup with Python's `urllib`, because the image ships neither
-curl nor wget.
+curl nor wget. Both run as the image's unprivileged user without any Linux capabilities, and the worker
+has no Docker socket: only the embedded outpost is used, so it needs no Docker integration.
 
 ## CrowdSec
 

@@ -5,6 +5,14 @@ services:
     env_file:
       - loki.env
     user: "10001:10001"
+    # Hardening (#103): non-root, needs no capabilities. No health check: distroless
+    # image without shell or HTTP client (see container-hardening-exceptions.yaml)
+    mem_limit: 1g
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
 
     command: -config.file=/etc/loki/config.yaml
     volumes:

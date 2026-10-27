@@ -1,0 +1,58 @@
+# Failed sudo: wrong password, user not in sudoers. Matches only sudo's own summary line
+# ("<user> : N incorrect password attempt ; ..."), not the PAM line
+# "pam_unix(sudo:auth): authentication failure", which has no user prefix and would
+# produce a second alert with an empty user.
+# Grafana alert rule, provisioning format (Issue #123). One file = one rule = one
+# evaluation group. Templates use {{ .Labels.x }} instead of
+# $labels: provisioning files interpolate $VARIABLES from the environment.
+apiVersion: 1
+groups:
+    - orgId: 1
+      name: sudo-failed
+      folder: Admins
+      interval: 10s
+      rules:
+        - uid: cg2i2a794qqdcb
+          title: "Sudo Anmeldung Fehlgeschlagen"
+          condition: C
+          data:
+            - refId: A
+              queryType: instant
+              relativeTimeRange:
+                from: 600
+                to: 0
+              datasourceUid: dfu95v5rjgf7kc
+              model:
+                datasource:
+                    type: loki
+                    uid: dfu95v5rjgf7kc
+                editorMode: code
+                expr: "sum by (sudo_user) (count_over_time({syslog_identifier=\"sudo\"} |~ \"incorrect password attempt|NOT in sudoers\" | regexp \"^\\\\s*(?P<sudo_user>[a-z_][a-z0-9_-]*) :\" [5m]))"
+                instant: true
+                queryType: instant
+                refId: A
+            - refId: C
+              queryType: expression
+              datasourceUid: __expr__
+              model:
+                type: threshold
+                expression: A
+                conditions:
+                    - evaluator:
+                        params:
+                            - 0
+                        type: gt
+                      type: query
+                refId: C
+          noDataState: OK
+          execErrState: Error
+          for: 0s
+          annotations:
+            summary: "sudo-Fehlversuch von {{ .Labels.sudo_user }}"
+            description: "Details: sudo journalctl -t sudo -n 20 auf dem Host"
+          isPaused: false
+          notification_settings:
+            receiver: Telegram
+            group_wait: 0s
+            group_interval: 1m
+            repeat_interval: 4h

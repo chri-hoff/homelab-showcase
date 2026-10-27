@@ -21,13 +21,14 @@ services:
 
       # Docker container logs (json-file) + metadata
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
 
     # If you get "permission denied" when reading /var/lib/docker/containers:
     # user: "0:0"
 
     labels:
       - traefik.enable=true
+      # Several networks incl. socket-proxy -> pin the one Traefik routes over
+      - traefik.docker.network=frontend
       - traefik.http.routers.alloy.rule=Host(`${TRAEFIK_HOST}`)
       - traefik.http.routers.alloy.entrypoints=websecure
       - traefik.http.routers.alloy.tls=true
@@ -36,12 +37,34 @@ services:
       - traefik.http.routers.alloy.middlewares=std-adm-internal-chain@file
 
     restart: unless-stopped
+
+    # Hardening (#103): runs as root; DAC_READ_SEARCH (read-only) for host logs
+    # not owned by root (e.g. /var/log/syslog = syslog:adm 640). The Ubuntu-based
+    # image has neither curl nor wget -> health check via bash /dev/tcp.
+    mem_limit: 1g
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - DAC_READ_SEARCH
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/12345 && printf 'GET /-/ready HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q '200 OK' <&3"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     networks:
       - backend
       - frontend # only needed if you want the UI via Traefik
+      # config.alloy: host = "tcp://docker-socket-proxy:2375" (#100 STEP 6)
+      - socket-proxy
 
 networks:
   frontend:
     external: true
   backend:
+    external: true
+  socket-proxy:
     external: true

@@ -14,6 +14,8 @@ one-click installer. Each folder is a working stack you can read, copy and adapt
 | **[Update pipeline](update-pipeline/)** | Kestra detects new image versions, n8n summarizes the changelog with Claude, I approve in my task app, and a Git commit plus a webhook deploys it. Supabase is the source of truth for target versions. Guard rails keep critical services manual. |
 | **[Secrets in Vault](secrets-vault/)** | Migrated from SOPS-encrypted `.env` files to HashiCorp Vault while the services kept running. One AppRole per service, and two injection patterns depending on what the image ships (entrypoint vs. sidecar). |
 | **[Edge security](edge-security/)** | Traefik middleware chains per exposure level (internal / trusted / public), Authentik SSO, CrowdSec at HTTP and firewall level with a custom scenario, and a host firewall that rolls itself back if I lock myself out. |
+| **[Container hardening](container-hardening/)** | Every container drops all capabilities and gets back only what its image provably needs, with `no-new-privileges`, memory and PID limits and health checks. A check script fails on any unjustified gap, daemon defaults cover ad-hoc containers, and a weekly Trivy scan reports fixable CVEs. |
+| **[Detection](detection/)** | Security alerts as code: SSH logins, failed sudo, account and critical-file changes (auditd), AppArmor denials, OOM kills and deploys outside the pipeline go from the journal through Loki to Grafana and Telegram. One provisioned rule per file, each with its rationale and a tested trigger. |
 
 ## Architecture
 
@@ -42,7 +44,8 @@ flowchart TB
     Apps -. "secrets at startup" .-> V
     K --> S
     K --> N
-    K -. "deploy via<br/>Docker socket" .-> Apps
+    K -. "SSH: homelab-deploy<br/>(forced command)" .-> Host["Host: deploy wrapper"]
+    Host -. "docker compose" .-> Apps
     Apps -. "metrics + logs" .-> Obs
 ```
 
@@ -53,6 +56,8 @@ flowchart TB
 | [`update-pipeline/`](update-pipeline/) | Kestra flows, Supabase schema and scripts, n8n workflow, deploy scripts |
 | [`secrets-vault/`](secrets-vault/) | Vault setup, both secret-injection patterns, unseal and seal-alert scripts |
 | [`edge-security/`](edge-security/) | Traefik static and dynamic config, Authentik, CrowdSec, host firewall and hardening |
+| [`container-hardening/`](container-hardening/) | Hardening baseline, ADR, check script and matrix, Docker daemon config, Trivy scan |
+| [`detection/`](detection/) | Grafana alert rules as code, auditd watch list, alert test runbook, ADR |
 | [`observability/`](observability/) | Prometheus, Grafana, Loki, Alloy, cAdvisor, Uptime Kuma |
 | [`cloud/`](cloud/) | Nextcloud and Collabora Online |
 | [`backup/`](backup/) | Borg backup for Nextcloud, Duplicati |

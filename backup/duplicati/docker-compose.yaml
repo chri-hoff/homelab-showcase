@@ -46,6 +46,22 @@ services:
       - traefik.http.routers.duplicati.middlewares=only-trusted@file
 
     restart: unless-stopped
+    # Hardening (#103): runs as root (PUID/PGID are not evaluated by run-as-user.sh);
+    # DAC_READ_SEARCH so the read-only source mount / can be backed up completely
+    mem_limit: 2g
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - DAC_READ_SEARCH
+    healthcheck:
+      test: ["CMD", "curl", "-so", "/dev/null", "http://localhost:8200/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     networks:
       - frontend
       - backend

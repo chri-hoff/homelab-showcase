@@ -1,0 +1,46 @@
+# Kestra flow: weekly vulnerability scan of all running images + Telegram summary
+# (Issue #103, STEP 8). The scan logic lives in scripts/security/trivy-scan.sh;
+# Trivy runs as a throwaway container via the host Docker socket, its DB is cached
+# in the named volume "trivy-cache".
+#
+# #100: the scan runs on the host via "homelab-deploy trivy-scan" (SSH, forced
+# command); Kestra itself has no Docker access.
+#
+# Prerequisites on the host:
+#   1. scripts/deploy/install-homelab-deploy.sh has run, Kestra has DEPLOY_SSH_KEY
+#   2. Import the flow into Kestra (UI -> Flows -> Create/Update)
+# Manual test without Kestra: bash scripts/security/trivy-scan.sh
+
+id: trivy-scan
+namespace: homelab
+
+triggers:
+  - id: weekly
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 6 * * 0"
+    timezone: Europe/Berlin
+
+tasks:
+  - id: scan
+    type: io.kestra.plugin.fs.ssh.Command
+    # #100: the only path to Docker -- homelab-deploy on the host (forced command)
+    host: 172.22.0.1
+    username: deploy
+    authMethod: PUBLIC_KEY
+    privateKey: "{{ secret('DEPLOY_SSH_KEY') }}"
+    # Full run on the host took ~10 min for 36 images (incl. first DB download)
+    timeout: PT1H
+    commands:
+      - trivy-scan
+
+finally:
+  - id: telegram-notify
+    type: io.kestra.plugin.scripts.shell.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    env:
+      BOT_TOKEN: "{{ secret('TELEGRAM_BOT_TOKEN') }}"
+      CHAT_ID: "{{ secret('TELEGRAM_CHAT_ID') }}"
+      REPORT: "{{ outputs.scan.vars.report | default('Trivy-Scan: kein Bericht -- siehe Kestra-Logs') }}"
+    commands:
+      - printf '🛡 %s' "$REPORT" | python3 /repo/scripts/kestra/telegram-send.py

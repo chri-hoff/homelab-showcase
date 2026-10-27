@@ -10,8 +10,19 @@ services:
 
     command: [ "vault", "server", "-config=/vault/config/vault.hcl" ]
 
+    # Hardening (#103): vault.hcl sets disable_mlock = true (raft) -> no IPC_LOCK, and
+    # SKIP_SETCAP skips the entrypoint's setcap on the binary. Entrypoint chowns as
+    # root and drops to user vault via su-exec -> CHOWN/SETUID/SETGID.
+    environment:
+      SKIP_SETCAP: "true"
+    mem_limit: 512m
+    pids_limit: 128
+    cap_drop:
+      - ALL
     cap_add:
-      - IPC_LOCK
+      - CHOWN
+      - SETUID
+      - SETGID
 
     volumes:
       - /mnt/wd-750/docker/data/vault/data:/vault/data

@@ -1,0 +1,40 @@
+# Prometheus node exporter for the ThinkCentre host (scraped as nodeexp:9100 over the
+# backend network, no published port). Previously ran from /opt/docker/nodeexp outside
+# the repo, as privileged and on :latest (#103).
+services:
+  nodeexp:
+    image: prom/node-exporter:${VERSION}
+    container_name: nodeexp
+    restart: unless-stopped
+    env_file:
+      - nodeexp.env
+    command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc|rootfs/var/lib/docker/containers|rootfs/var/lib/docker/overlay2|rootfs/run/docker/netns|rootfs/var/lib/docker/aufs)($|/)
+    volumes:
+      - /:/rootfs:ro
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+    # Hardening (#103): runs as nobody and only reads world-readable /proc and /sys
+    # files -> no privileged, no capabilities. Read-only root filesystem.
+    user: nobody
+    read_only: true
+    mem_limit: 128m
+    pids_limit: 64
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:9100/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - backend
+
+networks:
+  backend:
+    external: true
