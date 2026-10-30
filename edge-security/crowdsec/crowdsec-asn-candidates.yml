@@ -1,0 +1,30 @@
+# Kestra flow: weekly suggestion for the CrowdSec ASN blocklist (#127, ADR 005).
+# Reads public.asn_candidates (networks with >= 3 different IPs in 30 days, on neither
+# list, not decided on in the last 90 days; filled hourly by crowdsec-alerts-import) and
+# sends one Telegram message per network with the buttons "Sperren" / "Nicht sperren".
+# The click goes through telegram-listener to crowdsec-asn-decision.
+
+id: crowdsec-asn-candidates
+namespace: homelab
+
+triggers:
+  - id: weekly
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 8 * * 1"
+    timezone: Europe/Berlin
+
+tasks:
+  - id: report
+    type: io.kestra.plugin.scripts.shell.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    env:
+      SUPABASE_URL: http://supabase-envoy:8000
+      SUPABASE_ANON_KEY: "{{ secret('SUPABASE_ANON_KEY') }}"
+      SUPABASE_JWT: "{{ secret('SUPABASE_SYNC_JWT') }}"
+      BOT_TOKEN: "{{ secret('TELEGRAM_BOT_TOKEN') }}"
+      CHAT_ID: "{{ secret('TELEGRAM_CHAT_ID') }}"
+    commands:
+      - |
+        cd /repo
+        python3 scripts/supabase/report-asn-candidates.py

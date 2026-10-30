@@ -16,12 +16,18 @@
 #   update-check       scripts/docker/docker-update-check.sh (registry lookups for all
 #                      running images)
 #   backup-mariadb     scripts/backup/backup_mariadb.sh
+#   backup-vault       scripts/backup/backup_vault_snapshot.sh (encrypted Raft snapshot, #101)
+#   backup-postgres    scripts/backup/backup_postgres.sh (pg_dumpall of supabase-db and postgres)
 #   trivy-scan         scripts/security/trivy-scan.sh
+#   crowdsec-asn-sync  scripts/security/crowdsec-asn-blocklist.sh (ASN bans in the
+#                      Traefik plugin from config/crowdsec/asn-blocklist.txt, #127)
+#   crowdsec-alerts    CrowdSec alerts of the last 48 h as compact JSON (read only, #127)
 #
 # Results that Kestra needs as data are printed additionally as a Kestra outputs line
 # (::{"outputs":{...}}::), which the SSH Command task turns into outputs.vars.
 #
-# Every call is logged to the journal with tag "homelab-deploy".
+# Every call is logged to the journal with tag "homelab-deploy"; the output of the
+# actions that produce a report also goes there, tagged with the action name.
 set -uo pipefail
 
 REPO=/data/gitea/homelab
@@ -162,9 +168,10 @@ a = sys.argv[1:]
 print("\n::" + json.dumps({"outputs": {a[i]: open(a[i + 1]).read() for i in range(0, len(a), 2)}}) + "::")' "$@"
 }
 
-# Run a script, show its output live and keep it as "report" for Kestra
+# Run a script, show its output live, keep it as "report" for Kestra and send every line
+# to the journal with the action as tag (Loki: {syslog_identifier="backup-postgres"} etc.)
 run_report() {
-  "$@" 2>&1 | tee "$WORK/report.txt"
+  "$@" 2>&1 | tee "$WORK/report.txt" >(logger -t "$ACTION")
   return "${PIPESTATUS[0]}"
 }
 
@@ -193,12 +200,30 @@ case "$ACTION" in
     no_arg
     run_report bash "$REPO/scripts/backup/backup_mariadb.sh"; RC=$?
     kestra_output report "$WORK/report.txt" ;;
+  backup-vault)
+    no_arg
+    run_report bash "$REPO/scripts/backup/backup_vault_snapshot.sh"; RC=$?
+    kestra_output report "$WORK/report.txt" ;;
+  backup-postgres)
+    no_arg
+    run_report bash "$REPO/scripts/backup/backup_postgres.sh"; RC=$?
+    kestra_output report "$WORK/report.txt" ;;
   trivy-scan)
     no_arg
     run_report bash "$REPO/scripts/security/trivy-scan.sh"; RC=$?
     kestra_output report "$WORK/report.txt" ;;
+  crowdsec-asn-sync)
+    no_arg
+    run_report bash "$REPO/scripts/security/crowdsec-asn-blocklist.sh" sync; RC=$?
+    kestra_output report "$WORK/report.txt" ;;
+  crowdsec-alerts)
+    no_arg
+    cscli alerts list --since 48h -l 0 -o json > "$WORK/raw.json" \
+      && python3 "$REPO/scripts/security/crowdsec-alerts-export.py" "$WORK/alerts.json" < "$WORK/raw.json"
+    RC=$?
+    [ $RC -eq 0 ] && kestra_output alerts "$WORK/alerts.json" ;;
   *)
-    die "unbekannte Aktion '${ACTION}' (erlaubt: deploy <service>, auto-update, ps, update-check, backup-mariadb, trivy-scan)" ;;
+    die "unbekannte Aktion '${ACTION}' (erlaubt: deploy <service>, auto-update, ps, update-check, backup-mariadb, backup-vault, backup-postgres, trivy-scan, crowdsec-asn-sync, crowdsec-alerts)" ;;
 esac
 
 log "result=rc$RC"

@@ -1,0 +1,102 @@
+# Kestra flow: decision on an ASN suggestion from Telegram (#127, ADR 005).
+# crowdsec-asn-candidates sends each suggestion with the buttons "Sperren" /
+# "Nicht sperren"; telegram-listener sees the click (callback_query from the known
+# chat) and calls this webhook with {asn, decision: y|n, message_id}.
+#
+#   n -> asn_decisions "rejected", no suggestion for 90 days
+#   y -> the ASN with its evidence and "| until <today + 180 days>" is committed to
+#        config/crowdsec/asn-blocklist.txt on main (Gitea API), then the host checkout
+#        is pulled (auto-update) and the sync runs right away; Telegram reports the
+#        banned prefixes.
+#   r -> expiry reminder "Verlängern": until + 180 days, committed, synced
+#   x -> expiry reminder "Auslaufen lassen": nothing changes
+#
+# Logic: scripts/supabase/asn-decision.py. The webhook is only reachable on the
+# internal network; its key comes from Vault (homelab/services/kestra-webhooks, field
+# asn_decision) and is shared with telegram-listener.yml via secret().
+
+id: crowdsec-asn-decision
+namespace: homelab
+
+concurrency:
+  behavior: QUEUE
+  limit: 1
+
+triggers:
+  - id: telegram-trigger
+    type: io.kestra.plugin.core.trigger.Webhook
+    key: "{{ secret('ASN_DECISION_WEBHOOK_KEY') }}"
+
+tasks:
+  - id: decide
+    type: io.kestra.plugin.scripts.shell.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    env:
+      ASN: "{{ trigger.body.asn | default('') }}"
+      DECISION: "{{ trigger.body.decision | default('') }}"
+      MESSAGE_ID: "{{ trigger.body.message_id | default('') }}"
+      BOT_TOKEN: "{{ secret('TELEGRAM_BOT_TOKEN') }}"
+      CHAT_ID: "{{ secret('TELEGRAM_CHAT_ID') }}"
+      SUPABASE_URL: http://supabase-envoy:8000
+      SUPABASE_ANON_KEY: "{{ secret('SUPABASE_ANON_KEY') }}"
+      SUPABASE_JWT: "{{ secret('SUPABASE_SYNC_JWT') }}"
+      GITEA_URL: http://gitea:3000
+      GITEA_REPO: owner/homelab
+      GITEA_TOKEN: "{{ secret('GITEA_TOKEN') }}"
+    commands:
+      - |
+        cd /repo
+        python3 scripts/supabase/asn-decision.py
+
+  - id: apply
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ (outputs.decide.vars.apply | default('false')) == 'true' }}"
+    then:
+      # Pull the new blocklist onto the host (the push webhook does the same; both
+      # are serialized by the wrapper's lock, the second one finds nothing to do)
+      - id: pull
+        type: io.kestra.plugin.fs.ssh.Command
+        host: 172.22.0.1
+        username: deploy
+        authMethod: PUBLIC_KEY
+        privateKey: "{{ secret('DEPLOY_SSH_KEY') }}"
+        timeout: PT30M
+        commands:
+          - auto-update
+      - id: sync
+        type: io.kestra.plugin.fs.ssh.Command
+        host: 172.22.0.1
+        username: deploy
+        authMethod: PUBLIC_KEY
+        privateKey: "{{ secret('DEPLOY_SSH_KEY') }}"
+        timeout: PT10M
+        commands:
+          - crowdsec-asn-sync
+
+finally:
+  - id: telegram-result
+    type: io.kestra.plugin.scripts.shell.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    env:
+      BOT_TOKEN: "{{ secret('TELEGRAM_BOT_TOKEN') }}"
+      CHAT_ID: "{{ secret('TELEGRAM_CHAT_ID') }}"
+      ASN: "{{ trigger.body.asn | default('') }}"
+      APPLY: "{{ outputs.decide.vars.apply | default('') }}"
+      REPORT: "{{ outputs.sync.vars.report | default('') }}"
+    commands:
+      - |
+        set -e
+        if [ -z "$APPLY" ]; then
+          MSG="⚠️ ASN-Entscheidung für AS$ASN fehlgeschlagen -- siehe Kestra-Logs (crowdsec-asn-decision)"
+        elif [ "$APPLY" != true ]; then
+          exit 0
+        elif printf '%s' "$REPORT" | grep -q 'Status: Erfolgreich'; then
+          MSG="🚫 AS$ASN gesperrt (nur Traefik):$(printf '%s' "$REPORT" | grep "AS$ASN:" | sed 's/^ *AS[0-9]*:/ /')"
+        else
+          MSG="⚠️ AS$ASN ist auf der Sperrliste, aber der Sync ist fehlgeschlagen -- greift spätestens beim nächtlichen Lauf.
+
+        $REPORT"
+        fi
+        printf '%s' "$MSG" | python3 /repo/scripts/kestra/telegram-send.py

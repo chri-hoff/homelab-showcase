@@ -1,0 +1,16 @@
+# ASN blocklist (#127, ADR 005). Every prefix these networks announce is banned in the
+# Traefik CrowdSec plugin only: the decisions carry the reason "homelab/asn-blocklist",
+# which the firewall bouncer ignores (scenarios_not_containing), so the homelab's own
+# outbound connections to these networks keep working.
+#
+# Format: AS<number>  # name -- evidence | until YYYY-MM-DD
+# Add an ASN only with evidence from CrowdSec alerts (many different IPs, not one).
+# Every entry expires (default 180 days): from the day after "until" the sync skips
+# it, the network is observed again and suggested anew if it keeps scanning. Telegram
+# asks 7 days before expiry whether to extend. Entries approved in Telegram get their
+# date automatically. Applied by the nightly Kestra flow crowdsec-asn-sync; removing a
+# line lifts the ban on the next run.
+AS14061   # DigitalOcean -- 35 alerts from 19 different IPs, 2026-09-29..10-29 (scans, Jira/PHPUnit CVE probes) | until 2027-04-27
+AS396982  # Google Cloud -- 17 alerts from 8 different IPs, 2026-09-29..10-29 (.env/.git scans) | until 2027-04-27
+# Not AS15169 (Google's main network: Googlebot, Gmail, APIs), although one of the
+# 8 Google scanners came from there.

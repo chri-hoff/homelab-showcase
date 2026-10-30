@@ -14,6 +14,10 @@ rule returns to *Normal* about 5 minutes later (15 minutes for the 15m rules).
 | Speicherabbrüche (OOM) | `docker run --rm --memory 16m alpine:3.24.3 sh -c 'tail /dev/zero'` (real cgroup OOM kill) | `OOM: Kernel hat tail beendet …` |
 | Kritische Datei geändert | `sudo touch /etc/docker/daemon.json` | `Kritische Datei geändert durch touch (/usr/bin/touch)` |
 | HomeLab Deploy | `sudo homelab-deploy ps >/dev/null` | `homelab-deploy ps von local:<user> …` |
+| Vault: AppRole-Login fehlgeschlagen | `for i in 1 2 3; docker exec -e VAULT_ADDR=http://127.0.0.1:8200 vault vault write auth/approle/login role_id=runbook secret_id=runbook; end` | `Vault: fehlgeschlagene AppRole-Logins von 127.0.0.1` |
+| Vault: Root-Token benutzt | any `vault` command after `vault login` with the root token | `Vault: Root-Token für read …` |
+| Vault: Secret geändert | `vault kv put -mount=homelab services/alert-test x=1`, then `vault kv metadata delete -mount=homelab services/alert-test` | `Vault: create homelab/data/services/alert-test durch root` |
+| Plattenplatz knapp | rule preview in Grafana with threshold `0.99` (do not save) | -- |
 | Unerwarteter Neustart | not triggered on purpose -- check on the next planned reboot | `Neustart von <instance>` |
 | Dauerhaft hohe CPU-Last | rule preview in Grafana with threshold `0.01` (do not save) | -- |
 | Ungewöhnlich viel ausgehender Traffic | rule preview with threshold `1000` (do not save) | -- |

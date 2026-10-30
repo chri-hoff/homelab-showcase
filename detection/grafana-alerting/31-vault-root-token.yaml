@@ -1,0 +1,56 @@
+# Any request made with a root token (#101 STEP 2). Day-to-day work should not need it;
+# root tokens are for break-glass and setup. Fires for own admin sessions too -- on purpose.
+# Grafana alert rule, provisioning format (Issue #123). One file = one rule = one
+# evaluation group. Templates use {{ .Labels.x }} instead of
+# $labels: provisioning files interpolate $VARIABLES from the environment.
+apiVersion: 1
+groups:
+    - orgId: 1
+      name: vault-root-token
+      folder: Admins
+      interval: 10s
+      rules:
+        - uid: dg3k7vaultroot01a
+          title: "Vault: Root-Token benutzt"
+          condition: C
+          data:
+            - refId: A
+              queryType: instant
+              relativeTimeRange:
+                from: 600
+                to: 0
+              datasourceUid: dfu95v5rjgf7kc
+              model:
+                datasource:
+                    type: loki
+                    uid: dfu95v5rjgf7kc
+                editorMode: code
+                expr: "sum by (request_operation, request_path) (count_over_time({container=\"vault\"} |= \"\\\"type\\\":\\\"response\\\"\" |= \"\\\"policies\\\":[\\\"root\\\"]\" | json [5m]))"
+                instant: true
+                queryType: instant
+                refId: A
+            - refId: C
+              queryType: expression
+              datasourceUid: __expr__
+              model:
+                type: threshold
+                expression: A
+                conditions:
+                    - evaluator:
+                        params:
+                            - 0
+                        type: gt
+                      type: query
+                refId: C
+          noDataState: OK
+          execErrState: Error
+          for: 0s
+          annotations:
+            summary: "Vault: Root-Token für {{ .Labels.request_operation }} {{ .Labels.request_path }}"
+            description: "Wenn nicht du: Token sofort per Accessor widerrufen (vault token revoke -accessor <accessor>). Details: sudo tail -5 /opt/docker/vault/logs/audit.log"
+          isPaused: false
+          notification_settings:
+            receiver: Telegram
+            group_wait: 0s
+            group_interval: 1m
+            repeat_interval: 4h

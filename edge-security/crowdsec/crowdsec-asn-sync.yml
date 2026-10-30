@@ -1,0 +1,65 @@
+# Kestra flow: nightly re-apply of the CrowdSec ASN blocklist (#127, ADR 005).
+# The work happens on the host via "homelab-deploy crowdsec-asn-sync" (SSH, forced
+# command): RIPEstat prefixes of every ASN in config/crowdsec/asn-blocklist.txt,
+# minus config/crowdsec/asn-allowlist.txt, imported as range bans (7 days) that only
+# the Traefik plugin applies. Re-applied every night, because CrowdSec decisions
+# always expire and the database flush removes old ones.
+#
+# Prerequisites on the host: install-homelab-deploy.sh re-run (new action), once
+# "sudo bash scripts/security/crowdsec-asn-blocklist.sh --setup-bouncer".
+# Then entries expiring within 7 days get a Telegram reminder with the buttons
+# "Verlängern" / "Auslaufen lassen", expired ones an info (asn-expiry-notify.py).
+# The alerts go to Supabase hourly in their own flow (crowdsec-alerts-import).
+# Telegram only on failure; successful runs show up in the daily execution summary.
+
+id: crowdsec-asn-sync
+namespace: homelab
+
+triggers:
+  - id: nightly
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "15 4 * * *"
+    timezone: Europe/Berlin
+
+tasks:
+  - id: sync
+    type: io.kestra.plugin.fs.ssh.Command
+    # #100: the only path to the host -- homelab-deploy (forced command)
+    host: 172.22.0.1
+    username: deploy
+    authMethod: PUBLIC_KEY
+    privateKey: "{{ secret('DEPLOY_SSH_KEY') }}"
+    timeout: PT10M
+    commands:
+      - crowdsec-asn-sync
+
+  - id: expiry
+    type: io.kestra.plugin.scripts.shell.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    env:
+      SUPABASE_URL: http://supabase-envoy:8000
+      SUPABASE_ANON_KEY: "{{ secret('SUPABASE_ANON_KEY') }}"
+      SUPABASE_JWT: "{{ secret('SUPABASE_SYNC_JWT') }}"
+      BOT_TOKEN: "{{ secret('TELEGRAM_BOT_TOKEN') }}"
+      CHAT_ID: "{{ secret('TELEGRAM_CHAT_ID') }}"
+    commands:
+      - |
+        cd /repo
+        python3 scripts/supabase/asn-expiry-notify.py
+
+finally:
+  - id: telegram-on-failure
+    type: io.kestra.plugin.scripts.shell.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    env:
+      BOT_TOKEN: "{{ secret('TELEGRAM_BOT_TOKEN') }}"
+      CHAT_ID: "{{ secret('TELEGRAM_CHAT_ID') }}"
+      REPORT: "{{ outputs.sync.vars.report | default('') }}"
+    commands:
+      - |
+        set -e
+        printf '%s' "$REPORT" | grep -q 'Status: Erfolgreich' && exit 0
+        [ -n "$REPORT" ] || REPORT="kein Bericht, siehe Kestra-Logs"
+        printf '🚫 crowdsec-asn-sync FEHLGESCHLAGEN\n\n%s' "$REPORT" | python3 /repo/scripts/kestra/telegram-send.py

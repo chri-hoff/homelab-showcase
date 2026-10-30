@@ -1,0 +1,16 @@
+# Vault audit log (#101 STEP 1). Install: sudo install -m 0644 scripts/vault/vault-audit.logrotate /etc/logrotate.d/vault-audit
+# Vault reopens its audit file on SIGHUP; without it Vault would keep writing to the
+# rotated (deleted) file. 30 days locally; Loki gets the same records via the stdout device.
+/opt/docker/vault/logs/audit.log {
+    daily
+    rotate 30
+    compress
+    delaycompress
+    missingok
+    notifempty
+    # Vault creates the new file itself when it reopens it (audit device option mode=0600)
+    nocreate
+    postrotate
+        /usr/bin/docker kill --signal=HUP vault >/dev/null 2>&1 || true
+    endscript
+}

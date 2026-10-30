@@ -1,0 +1,27 @@
+# Telegram contact point for all alert rules in this directory (Issue #123).
+# Bot token and chat ID are NOT in the repo: the Grafana entrypoint reads them from Vault
+# (homelab/services/telegram, policy grafana-ro) and exports TELEGRAM_BOT_TOKEN /
+# TELEGRAM_CHAT_ID; Grafana interpolates $VARIABLES in provisioning files at startup.
+# The message template therefore must not contain "$" (it does not).
+# parse_mode None: plain text, so "<", "_" or "*" in alert texts cannot break the message.
+apiVersion: 1
+contactPoints:
+    - orgId: 1
+      name: Telegram
+      receivers:
+        - uid: cfv5qeqyenxmob
+          type: telegram
+          settings:
+            bottoken: $TELEGRAM_BOT_TOKEN
+            chatid: "${TELEGRAM_CHAT_ID}"
+            disable_notification: false
+            disable_web_page_preview: true
+            parse_mode: None
+            protect_content: false
+            message: |-
+              {{ range .Alerts }}{{ if eq .Status "firing" }}🚨{{ else }}✅{{ end }} {{ .Labels.alertname }} – {{ if eq .Status "firing" }}ausgelöst{{ else }}erledigt{{ end }}
+              {{ with .Annotations.summary }}{{ . }}
+              {{ end }}{{ with .Annotations.description }}{{ . }}
+              {{ end }}Zeit: {{ .StartsAt | tz "Europe/Berlin" | date "02.01.2006 15:04" }}
+              {{ end }}
+          disableResolveMessage: false

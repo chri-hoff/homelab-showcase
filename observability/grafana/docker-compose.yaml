@@ -24,6 +24,15 @@ services:
         export GF_AUTH_GENERIC_OAUTH_CLIENT_ID=$$(echo "$$SECRET_RESPONSE" | grep -o '"oauth_client_id":"[^"]*"' | cut -d'"' -f4)
         export GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET=$$(echo "$$SECRET_RESPONSE" | grep -o '"oauth_client_secret":"[^"]*"' | cut -d'"' -f4)
 
+        # Telegram contact point (#123): provisioning/alerting/00-contact-point.yaml reads
+        # TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID (no dollar sign here: compose would
+        # interpolate it even inside this comment). Same Vault path as Kestra. Tolerant:
+        # without it Grafana still starts, only notifications fail.
+        TG_RESPONSE=$$(wget -qO- --header="X-Vault-Token: $$VAULT_TOKEN" \
+          http://vault:8200/v1/homelab/data/services/telegram) || TG_RESPONSE=""
+        export TELEGRAM_BOT_TOKEN=$$(echo "$$TG_RESPONSE" | grep -o '"bot_token":"[^"]*"' | cut -d'"' -f4)
+        export TELEGRAM_CHAT_ID=$$(echo "$$TG_RESPONSE" | grep -o '"chat_id":"[^"]*"' | cut -d'"' -f4)
+
         exec /run.sh
       - --
     env_file:

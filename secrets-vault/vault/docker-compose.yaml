@@ -26,12 +26,19 @@ services:
 
     volumes:
       - /mnt/wd-750/docker/data/vault/data:/vault/data
+      # Audit log on the SSD (#101 STEP 1): file device "file" writes audit.log here,
+      # rotated by /etc/logrotate.d/vault-audit (scripts/vault/vault-audit.logrotate).
+      # The host directory must belong to the image user vault (uid 100): the entrypoint
+      # does not chown it with this command line ("vault server ..." instead of "server").
+      - /opt/docker/vault/logs:/vault/logs
       - /opt/docker/vault/config/vault.hcl:/vault/config/vault.hcl:ro
       - /etc/timezone:/etc/timezone:ro
       - /etc/localtime:/etc/localtime:ro
 
+    # #101 STEP 5: backend only. Every consumer (entrypoints, vault-agent sidecars,
+    # Traefik, host scripts via the backend IP or docker exec) is on backend; on
+    # frontend any container there could reach the plain-HTTP API.
     networks:
-      - frontend
       - backend
 
     security_opt:
@@ -47,6 +54,8 @@ services:
 
     labels:
       - traefik.enable=true
+      # Only reachable over backend now
+      - traefik.docker.network=backend
       - traefik.http.routers.vault.entrypoints=websecure
       - traefik.http.routers.vault.rule=Host(`${TRAEFIK_HOST}`)
       - traefik.http.routers.vault.tls=true
@@ -55,7 +64,5 @@ services:
       - traefik.http.routers.vault.middlewares=vault-chain@file
 
 networks:
-  frontend:
-    external: true
   backend:
     external: true

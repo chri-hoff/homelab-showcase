@@ -40,8 +40,17 @@ table inet host-firewall {
 		# DHCP replies (eno1 gets its address via DHCP)
 		udp sport 67 udp dport 68 accept
 
-		# Container -> host (e.g. Traefik bouncer -> CrowdSec LAPI :8080)
-		ip saddr 172.16.0.0/12 accept
+		# Container -> host: only what is needed (#126). Before: every container (also the
+		# public ones) could reach every host port, including SSH and RDP.
+		# Traefik's CrowdSec plugin -> LAPI (frontend/backend subnets)
+		ip saddr { 172.21.0.0/16, 172.22.0.0/16 } tcp dport 8080 accept
+		# Kestra (fixed IP in backend) -> homelab-deploy (SSH forced command, #100)
+		ip saddr 172.22.0.250 tcp dport 22 accept
+		# Containers calling a public hostname (resolves to the host): Docker skips the
+		# DNAT for traffic from Traefik's own networks and hands it to docker-proxy on
+		# the host, i.e. via INPUT. Needed for Nextcloud <-> Collabora (WOPI), Uptime Kuma
+		# checks, Kestra/n8n calls via Traefik.
+		ip saddr { 172.21.0.0/16, 172.22.0.0/16 } tcp dport { 80, 443 } accept
 
 		tcp dport 22 ip saddr @admin_v4 accept
 		tcp dport 3389 ip saddr @vpn_v4 accept

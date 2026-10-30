@@ -1,7 +1,7 @@
 # Backup
 
-Two complementary tools: a scripted, consistent backup of Nextcloud with Borg, and Duplicati
-for everything else.
+Scripted, consistent backups where a file copy would not be enough (Nextcloud with Borg, the
+Postgres instances, Vault in `secrets-vault/`), and Duplicati to take everything off-site.
 
 ## Nextcloud with Borg (`nextcloud-borg/`)
 
@@ -44,14 +44,35 @@ flowchart LR
 - **Telegram notification** on success and failure, sent from the EXIT trap so a crash is
   reported too. The bot token never appears on a command line, and a failed notification never
   fails the backup.
-- Log files are shipped to Loki by Alloy (see `observability/`), so backup results show up in
-  Grafana.
+- Every log line also goes to the systemd journal (`logger -t backup-nextcloud`), which Alloy
+  ships to Loki (see `observability/`), so backup results show up in Grafana. Tailing the log
+  file directly would not work reliably: it is reset at the start of each run and trimmed by
+  replacing it.
+
+## Postgres (`postgres/`)
+
+`backup_postgres.sh` dumps both Postgres instances every night: the Supabase database (update
+pipeline, CrowdSec history) and the shared instance for Authentik, Gitea and Kestra. A daily
+Kestra flow runs it on the host through the deploy wrapper and reports the result in Telegram.
+
+- **`pg_dumpall`, not a copy of the data directory:** copying the files of a running Postgres
+  does not give a consistent state, a dump does. It also contains the roles and every database
+  of the instance.
+- **Checked before it counts:** the exit status of the whole pipe, `gzip -t`, and the closing
+  line that `pg_dumpall` only writes after a complete run. Only then is the temporary file
+  renamed. A broken dump leaves nothing behind that looks like a backup.
+- **One instance failing does not stop the other.** The report lists both, and the run fails if
+  either did.
+- Passwords stay inside the containers, files and directory are readable by root only.
+  Retention is 14 days plus the Sunday dumps of 8 weeks, as for the Vault snapshots.
 
 ## Duplicati (`duplicati/`)
 
 Web-UI-based, encrypted, deduplicated backups of the remaining data.
 
-- The web UI password comes from Vault (AppRole entrypoint, see `secrets-vault/`).
+- The web UI password and the key that encrypts Duplicati's own database (backup passphrases,
+  destination credentials) come from Vault (AppRole entrypoint, see `secrets-vault/`). The
+  container refuses to start without the key rather than storing these secrets in plain text.
 - Reachable from trusted networks only (`only-trusted`). There is deliberately **no Authentik** in front of it:
   Duplicati's new web UI handles its own login tokens, and the forward-auth layer raced with
   them, which caused intermittent authentication failures. The VPN plus Duplicati's own password

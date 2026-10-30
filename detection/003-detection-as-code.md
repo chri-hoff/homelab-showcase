@@ -28,6 +28,8 @@ them invisible in Git, hard to review and easy to lose.
    | Deploy wrapper used outside Kestra | any `homelab-deploy` call that is not Kestra's, or that was rejected (ADR 002) |
    | Unexpected reboot | node exporter boot time changed |
    | Sustained CPU > 90 %, unusual outbound traffic | crypto miner, data exfiltration (15-minute pending period) |
+   | Vault: failed AppRole logins, root token used, secret changed | Vault audit stream (ADR 004) |
+   | Low disk space | a full SSD would also block Vault's audit file |
 
 2. **Rules as code.** One provisioning file per rule in
    `services/grafana/provisioning/alerting/`, mounted read-only into Grafana. A change is a

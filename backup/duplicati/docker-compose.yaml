@@ -19,6 +19,13 @@ services:
         SECRET_RESPONSE=$$(curl -sf -H "X-Vault-Token: $$VAULT_TOKEN" \
           http://vault:8200/v1/homelab/data/services/duplicati)
         export DUPLICATI__WEBSERVICE_PASSWORD=$$(echo "$$SECRET_RESPONSE" | grep -o '"webservice_password":"[^"]*"' | cut -d'"' -f4)
+        # Encrypts the secrets in the server database (backup passphrases, destination
+        # credentials). Without it Duplicati stores them in plain text on a server without
+        # a keyring ("Unencrypted database"). Refuse to start without the key: an empty
+        # value would silently write new secrets unencrypted, or leave already encrypted
+        # fields unreadable.
+        export SETTINGS_ENCRYPTION_KEY=$$(echo "$$SECRET_RESPONSE" | grep -o '"settings_encryption_key":"[^"]*"' | cut -d'"' -f4)
+        [ -n "$$SETTINGS_ENCRYPTION_KEY" ] || { echo "FEHLER: settings_encryption_key fehlt in Vault (homelab/services/duplicati)" >&2; exit 1; }
 
         exec /usr/bin/tini -- /run-as-user.sh duplicati-server
     env_file:
@@ -32,7 +39,10 @@ services:
     volumes:
       - /opt/docker/duplicati/config:/config
       - /data/backup:/backups
-      - /:/source:ro
+      # #126: only what is backed up, no longer the whole host (/:/source:ro made
+      # /opt/docker/secrets -- every AppRole -- readable). Same path inside the
+      # container as before, so existing job sources (/source/data/backup/...) stay valid.
+      - /data/backup:/source/data/backup:ro
     secrets:
       - duplicati_vault_role_id
       - duplicati_vault_secret_id
@@ -47,7 +57,8 @@ services:
 
     restart: unless-stopped
     # Hardening (#103): runs as root (PUID/PGID are not evaluated by run-as-user.sh);
-    # DAC_READ_SEARCH so the read-only source mount / can be backed up completely
+    # DAC_READ_SEARCH so backups owned by other users with mode 600 (dumps, snapshots)
+    # can be read
     mem_limit: 2g
     pids_limit: 256
     security_opt:

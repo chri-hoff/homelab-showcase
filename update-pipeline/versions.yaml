@@ -12,10 +12,10 @@ services:
     notes: ""
 
   alloy:
-    version: "v1.21.2"
+    version: "v1.21.3"
     image: "grafana/alloy"
     stack: "alloy"
-    last_updated: "2026-10-27"
+    last_updated: "2026-10-29"
     updateable: true
     breaking_changes: false
     notes: "automatisch erkannt (Check-Lauf)"
@@ -66,10 +66,10 @@ services:
     notes: "Socket-Proxy, #100 STEP 6"
 
   duplicati:
-    version: "2.4.0.1"
+    version: "2.4.1.0"
     image: "duplicati/duplicati"
     stack: "duplicati"
-    last_updated: "2026-10-27"
+    last_updated: "2026-10-30"
     updateable: true
     breaking_changes: false
     notes: "automatisch erkannt (Check-Lauf)"
@@ -93,10 +93,10 @@ services:
     notes: "regular update"
 
   kestra:
-    version: "v1.3.44"
+    version: "v1.3.45"
     image: "kestra/kestra"
     stack: "kestra"
-    last_updated: "2026-10-21"
+    last_updated: "2026-10-29"
     updateable: false
     breaking_changes: false
     notes: "regular update"
@@ -129,19 +129,19 @@ services:
     notes: "regular update"
 
   n8n:
-    version: "2.46.0"
+    version: "2.46.3"
     image: "n8nio/n8n"
     stack: "n8n"
-    last_updated: "2026-10-27"
+    last_updated: "2026-10-30"
     updateable: true
     breaking_changes: false
     notes: "regular update"
 
   nextcloud:
-    version: "34.0.5"
+    version: "35.0.2"
     image: "nextcloud"
     stack: "nextcloud"
-    last_updated: "2026-10-16"
+    last_updated: "2026-10-29"
     updateable: true
     breaking_changes: false
     notes: "Security update"
@@ -184,11 +184,11 @@ services:
     notes: "automatisch erkannt (Check-Lauf)"
 
   supabase-auth:
-    version: "v2.196.0"
+    version: "v2.197.0"
     image: "supabase/gotrue"
     stack: "supabase"
     bundle: "supabase"
-    last_updated: "2026-10-19"
+    last_updated: "2026-10-30"
     updateable: false
     breaking_changes: false
     notes: "automatisch erkannt (Check-Lauf)"
@@ -204,41 +204,41 @@ services:
     notes: "automatisch erkannt (Check-Lauf)"
 
   supabase-meta:
-    version: "v0.99.0"
+    version: "v0.100.0"
     image: "supabase/postgres-meta"
     stack: "supabase"
     bundle: "supabase"
-    last_updated: "2026-10-19"
+    last_updated: "2026-10-30"
     updateable: false
     breaking_changes: false
     notes: "automatisch erkannt (Check-Lauf)"
 
   supabase-realtime:
-    version: "v2.134.10"
+    version: "v2.143.3"
     image: "supabase/realtime"
     stack: "supabase"
     bundle: "supabase"
-    last_updated: "2026-10-19"
+    last_updated: "2026-10-30"
     updateable: false
     breaking_changes: false
     notes: "automatisch erkannt (Check-Lauf)"
 
   supabase-rest:
-    version: "v14.17"
+    version: "v14.18"
     image: "postgrest/postgrest"
     stack: "supabase"
     bundle: "supabase"
-    last_updated: "2026-10-19"
+    last_updated: "2026-10-30"
     updateable: false
     breaking_changes: false
     notes: "automatisch erkannt (Check-Lauf)"
 
   supabase-studio:
-    version: "2026.09.07-sha-7996410"
+    version: "2026.10.12-sha-3699278"
     image: "supabase/studio"
     stack: "supabase"
     bundle: "supabase"
-    last_updated: "2026-10-19"
+    last_updated: "2026-10-30"
     updateable: false
     breaking_changes: false
     notes: "automatisch erkannt (Check-Lauf)"

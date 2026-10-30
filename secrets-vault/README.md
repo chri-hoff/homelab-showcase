@@ -71,6 +71,39 @@ uses the same pattern for all of its services.
   Vault: an alert that needs Vault to send "Vault is sealed" would never fire.
 - **Never auto-updated:** a Vault restart means a sealed Vault, which means every service that
   fetches a secret at startup fails. The update pipeline excludes Vault for that reason.
+- **Backend network only:** every consumer was checked to be on `backend` before Vault left
+  the `frontend` network, so web-facing containers cannot reach the API.
+
+## Backup and restore
+
+```mermaid
+flowchart LR
+    K["Kestra<br/>daily 02:30"] -->|"SSH: homelab-deploy backup-vault"| S["snapshot script<br/>(AppRole: snapshot only,<br/>host-bound, 10 min token)"]
+    S -->|"sys/storage/raft/snapshot"| V[(Vault)]
+    S --> C{"tar.gz +<br/>SHA256SUMS ok?"}
+    C -->|yes| E["age encrypt<br/>(offline backup key)"]
+    E --> B["/data/backup/.../vault<br/>14 days + 8 Sundays"]
+    B --> D["Duplicati -> cloud"]
+```
+
+- **Snapshot through the API**, the consistent method while Vault runs. A copy of the Raft
+  directory would not be, and stopping Vault would seal it.
+- **Encrypted with a dedicated age key whose private half is offline** next to the unseal keys.
+  Not the SOPS key: that one lives in Vault, and a backup that needs Vault to be decrypted
+  cannot restore Vault.
+- **Restore is tested** (`restore/vault-restore.md`): the newest snapshot goes into a throwaway
+  Vault with `--network none`, gets unsealed with the real key shares, and a secret is read.
+
+## Audit
+
+- **Two audit devices**, because Vault refuses requests when none can write: a file on the SSD
+  (logrotate, 30 days) and `stdout`, which reuses Docker's log rotation and the existing
+  Alloy -> Loki pipeline. Values are HMAC-hashed.
+- **Alerts on the audit stream** (see [detection](../detection/)): repeated failed AppRole
+  logins, any use of a root-policy token, any write under `homelab/`, low disk space.
+
+Decision record with alternatives (Borg copy, SOPS key, TLS on the listener, syslog device):
+[ADR 004](004-vault-audit-backup-network.md).
 
 ## Deliberate exceptions
 
@@ -92,6 +125,10 @@ uses the same pattern for all of its services.
 | `vault-agent/Dockerfile` | the sidecars' image: Alpine with curl and jq, nothing else |
 | `scripts/vault-unseal.fish` | interactive unseal helper |
 | `scripts/check_vault_sealed.sh` | cron-based seal alert via Telegram |
+| `backup/` | snapshot script, the backup public key, the snapshot-only policy, Kestra flow |
+| `audit/vault-audit.logrotate` | rotation of the audit file with SIGHUP |
+| `restore/vault-restore.md` | restore runbook (tested) |
+| `004-vault-audit-backup-network.md` | ADR |
 
 More services that use these patterns: `update-pipeline/kestra` (feeds Kestra's `secret()`),
 `edge-security/authentik` (python3), `cloud/nextcloud`, `observability/grafana`,

@@ -1,0 +1,59 @@
+# Failed AppRole logins on Vault (#101 STEP 2): wrong role/secret ID, expired secret ID or a
+# login from outside the bound CIDR. One failure can be a restart race; 3 in 5 minutes is not.
+# Source: Vault audit device stdout -> container log -> Alloy -> Loki.
+# A failed login has no top-level "error" in the audit record: the response carries
+# data.error (HMAC-hashed like every value) and no auth block -> response_data_error.
+# Grafana alert rule, provisioning format (Issue #123). One file = one rule = one
+# evaluation group. Templates use {{ .Labels.x }} instead of
+# $labels: provisioning files interpolate $VARIABLES from the environment.
+apiVersion: 1
+groups:
+    - orgId: 1
+      name: vault-approle-failed
+      folder: Admins
+      interval: 10s
+      rules:
+        - uid: dg3k7vaultlogin01a
+          title: "Vault: AppRole-Login fehlgeschlagen"
+          condition: C
+          data:
+            - refId: A
+              queryType: instant
+              relativeTimeRange:
+                from: 600
+                to: 0
+              datasourceUid: dfu95v5rjgf7kc
+              model:
+                datasource:
+                    type: loki
+                    uid: dfu95v5rjgf7kc
+                editorMode: code
+                expr: "sum by (request_remote_address) (count_over_time({container=\"vault\"} |= \"\\\"type\\\":\\\"response\\\"\" | json | request_path=\"auth/approle/login\" and response_data_error!=\"\" [5m]))"
+                instant: true
+                queryType: instant
+                refId: A
+            - refId: C
+              queryType: expression
+              datasourceUid: __expr__
+              model:
+                type: threshold
+                expression: A
+                conditions:
+                    - evaluator:
+                        params:
+                            - 2
+                        type: gt
+                      type: query
+                refId: C
+          noDataState: OK
+          execErrState: Error
+          for: 0s
+          annotations:
+            summary: "Vault: fehlgeschlagene AppRole-Logins von {{ .Labels.request_remote_address }}"
+            description: "Welche Rolle: sudo grep approle/login /opt/docker/vault/logs/audit.log | tail -5 (role_id ist gehasht; Zeitpunkt mit Container-Neustarts vergleichen)"
+          isPaused: false
+          notification_settings:
+            receiver: Telegram
+            group_wait: 0s
+            group_interval: 1m
+            repeat_interval: 4h

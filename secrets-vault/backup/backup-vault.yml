@@ -1,0 +1,52 @@
+# Kestra flow: daily encrypted Vault Raft snapshot (#101 STEP 3).
+# The work happens on the host via "homelab-deploy backup-vault" (SSH, forced command):
+# snapshot through the API with the AppRole "vault-backup", integrity check, age
+# encryption with the offline backup key, retention 14 days + 8 Sundays.
+# Target: /data/backup/<host>/vault -- Duplicati copies it to OneDrive.
+# Restore: docs/runbooks/vault-restore.md
+#
+# Prerequisites on the host: policy + AppRole vault-backup (services/vault/policies/),
+# role_id/secret_id in /opt/docker/secrets/vault_backup_*.txt, "age" installed,
+# scripts/backup/vault-backup.age.pub contains the public backup key.
+
+id: backup-vault
+namespace: homelab
+
+triggers:
+  - id: nightly
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "30 2 * * *"
+    timezone: Europe/Berlin
+
+tasks:
+  - id: backup-vault
+    type: io.kestra.plugin.fs.ssh.Command
+    # #100: the only path to the host -- homelab-deploy (forced command)
+    host: 172.22.0.1
+    username: deploy
+    authMethod: PUBLIC_KEY
+    privateKey: "{{ secret('DEPLOY_SSH_KEY') }}"
+    timeout: PT10M
+    commands:
+      - backup-vault
+
+finally:
+  - id: telegram-notify
+    type: io.kestra.plugin.scripts.shell.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    env:
+      BOT_TOKEN: "{{ secret('TELEGRAM_BOT_TOKEN') }}"
+      CHAT_ID: "{{ secret('TELEGRAM_CHAT_ID') }}"
+      REPORT: "{{ outputs['backup-vault'].vars.report | default('') }}"
+    commands:
+      - |
+        set -e
+        if printf '%s' "$REPORT" | grep -q 'Status: Erfolgreich'; then
+          PREFIX="🔐 backup-vault OK"
+        elif [ -n "$REPORT" ]; then
+          PREFIX="🔐 backup-vault FEHLGESCHLAGEN"
+        else
+          PREFIX="🔐 backup-vault FEHLGESCHLAGEN -- kein Bericht, siehe Kestra-Logs"
+        fi
+        printf '%s\n\n%s' "$PREFIX" "$REPORT" | python3 /repo/scripts/kestra/telegram-send.py

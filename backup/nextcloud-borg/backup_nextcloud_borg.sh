@@ -72,6 +72,12 @@ log_json() {
   printf '{"timestamp":"%s","level":"%s","job":"%s","host":"%s","message":"%s"}\n' \
     "$ts" "$(json_escape "$level")" "$(json_escape "$BACKUP_NAME")" \
     "$(json_escape "$HOST")" "$(json_escape "$message")" >> "$LOG"
+  # Also to the journal -> Alloy -> Loki ({syslog_identifier="backup-<name>"}). The file
+  # above is reset at the start of every run and trimmed by replacement, which a file
+  # tailer would read twice or only partly; the journal has neither problem.
+  local prio=info
+  case "$level" in ERROR) prio=err ;; WARN) prio=warning ;; esac
+  logger -t "backup-${BACKUP_NAME}" -p "user.${prio}" -- "$message" 2>/dev/null || true
 }
 
 mail_info()  { printf '[INFO]  %s\n' "$1"; }

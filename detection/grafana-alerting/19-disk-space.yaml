@@ -1,0 +1,52 @@
+# Less than 10 % free space on a real filesystem (SSD, data HDD, backup disk) for 10 minutes.
+# A full SSD would also stop Vault: it refuses requests when no audit device can write (#101).
+# Grafana alert rule, provisioning format (Issue #123). One file = one rule = one
+# evaluation group. Templates use {{ .Labels.x }} instead of
+# $labels: provisioning files interpolate $VARIABLES from the environment.
+apiVersion: 1
+groups:
+    - orgId: 1
+      name: disk-space
+      folder: Admins
+      interval: 10s
+      rules:
+        - uid: dg3k7diskspace01a
+          title: "Plattenplatz knapp"
+          condition: C
+          data:
+            - refId: A
+              relativeTimeRange:
+                from: 600
+                to: 0
+              datasourceUid: bfu5x8zzwhekga
+              model:
+                editorMode: code
+                expr: "(node_filesystem_avail_bytes{fstype=~\"ext4|xfs|btrfs|vfat\"} / node_filesystem_size_bytes{fstype=~\"ext4|xfs|btrfs|vfat\"})"
+                instant: true
+                range: false
+                refId: A
+            - refId: C
+              queryType: expression
+              datasourceUid: __expr__
+              model:
+                type: threshold
+                expression: A
+                conditions:
+                    - evaluator:
+                        params:
+                            - 0.1
+                        type: lt
+                      type: query
+                refId: C
+          noDataState: OK
+          execErrState: Error
+          for: 10m
+          annotations:
+            summary: "Nur noch wenig Platz: {{ .Labels.mountpoint }} auf {{ .Labels.instance }} (unter 10 % frei)"
+            description: "Prüfen: df -h; sudo du -xh --max-depth=1 <mountpoint> | sort -h | tail"
+          isPaused: false
+          notification_settings:
+            receiver: Telegram
+            group_wait: 0s
+            group_interval: 1m
+            repeat_interval: 4h

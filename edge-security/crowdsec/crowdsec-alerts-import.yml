@@ -1,0 +1,53 @@
+# Kestra flow: CrowdSec alerts -> Supabase, hourly (#127, ADR 005).
+# "homelab-deploy crowdsec-alerts" lists the alerts of the last 48 h on the host;
+# record-crowdsec-alerts.py inserts them into public.crowdsec_alerts (key: start
+# second, IP, scenario -> already imported alerts are ignored) and mirrors
+# public.asn_list from the two list files.
+#
+# Hourly rather than nightly: CrowdSec's database flush removes old alerts by age and
+# by count (max_items), so under heavy load an alert might not survive until night,
+# and the decision count is only right while the decision still exists. The 48 h
+# window keeps an outage of several runs harmless.
+#
+# No Telegram: a failing hourly run would message every hour; failed executions show
+# up in the daily execution summary.
+
+id: crowdsec-alerts-import
+namespace: homelab
+
+concurrency:
+  behavior: CANCEL
+  limit: 1
+
+triggers:
+  - id: hourly
+    type: io.kestra.plugin.core.trigger.Schedule
+    # minute 7: never at the same time as the 04:15 sync or the full hour
+    cron: "7 * * * *"
+    timezone: Europe/Berlin
+
+tasks:
+  - id: alerts
+    type: io.kestra.plugin.fs.ssh.Command
+    # #100: the only path to the host -- homelab-deploy (forced command, read only)
+    host: 172.22.0.1
+    username: deploy
+    authMethod: PUBLIC_KEY
+    privateKey: "{{ secret('DEPLOY_SSH_KEY') }}"
+    timeout: PT5M
+    commands:
+      - crowdsec-alerts
+
+  - id: record
+    type: io.kestra.plugin.scripts.shell.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    env:
+      ALERTS_JSON: "{{ outputs.alerts.vars.alerts }}"
+      SUPABASE_URL: http://supabase-envoy:8000
+      SUPABASE_ANON_KEY: "{{ secret('SUPABASE_ANON_KEY') }}"
+      SUPABASE_JWT: "{{ secret('SUPABASE_SYNC_JWT') }}"
+    commands:
+      - |
+        cd /repo
+        printf '%s' "$ALERTS_JSON" | python3 scripts/supabase/record-crowdsec-alerts.py

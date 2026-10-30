@@ -1,0 +1,51 @@
+# Kestra flow: daily logical backup of both Postgres instances (supabase-db and the shared
+# postgres for Authentik/Gitea/Kestra).
+# The work happens on the host via "homelab-deploy backup-postgres" (SSH, forced
+# command): pg_dumpall per instance, checked (pipe status, gzip -t, closing line),
+# retention 14 days + 8 Sundays. Target: /data/backup/<host>/postgres -- Duplicati copies
+# it to OneDrive. Restore: see the header of scripts/backup/backup_postgres.sh.
+#
+# Prerequisites on the host: install-homelab-deploy.sh re-run (new action).
+
+id: backup-postgres
+namespace: homelab
+
+triggers:
+  - id: nightly
+    type: io.kestra.plugin.core.trigger.Schedule
+    # between backup-vault (02:30) and backup-mariadb (03:00)
+    cron: "45 2 * * *"
+    timezone: Europe/Berlin
+
+tasks:
+  - id: backup-postgres
+    type: io.kestra.plugin.fs.ssh.Command
+    # #100: the only path to the host -- homelab-deploy (forced command)
+    host: 172.22.0.1
+    username: deploy
+    authMethod: PUBLIC_KEY
+    privateKey: "{{ secret('DEPLOY_SSH_KEY') }}"
+    timeout: PT30M
+    commands:
+      - backup-postgres
+
+finally:
+  - id: telegram-notify
+    type: io.kestra.plugin.scripts.shell.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    env:
+      BOT_TOKEN: "{{ secret('TELEGRAM_BOT_TOKEN') }}"
+      CHAT_ID: "{{ secret('TELEGRAM_CHAT_ID') }}"
+      REPORT: "{{ outputs['backup-postgres'].vars.report | default('') }}"
+    commands:
+      - |
+        set -e
+        if printf '%s' "$REPORT" | grep -q 'Status: Erfolgreich'; then
+          PREFIX="🐘 backup-postgres OK"
+        elif [ -n "$REPORT" ]; then
+          PREFIX="🐘 backup-postgres FEHLGESCHLAGEN"
+        else
+          PREFIX="🐘 backup-postgres FEHLGESCHLAGEN -- kein Bericht, siehe Kestra-Logs"
+        fi
+        printf '%s\n\n%s' "$PREFIX" "$REPORT" | python3 /repo/scripts/kestra/telegram-send.py

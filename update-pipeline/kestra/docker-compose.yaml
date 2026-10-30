@@ -84,6 +84,8 @@ services:
         # Webhook key of update-on-merge (Gitea push), referenced in the flow as
         # secret() instead of a literal key in the repository
         export SECRET_UPDATE_ON_MERGE_WEBHOOK_KEY=$$(vault_b64 kestra-webhooks update_on_merge)
+        # Webhook key of crowdsec-asn-decision (Telegram buttons via telegram-listener, #127)
+        export SECRET_ASN_DECISION_WEBHOOK_KEY=$$(vault_b64 kestra-webhooks asn_decision)
 
         exec /app/kestra "$$@"
       - --
@@ -114,7 +116,6 @@ services:
     # cpus: 4
     volumes:
       - /mnt/wd-750/docker/data/kestra/storage:/app/storage
-      - /data/backup:/mnt/backup
       # #100: flows run in this container (Process runner) instead of task containers:
       # repo scripts read-only, state of telegram-listener
       - /data/gitea/homelab:/repo:ro
