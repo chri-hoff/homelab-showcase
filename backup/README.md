@@ -73,6 +73,9 @@ Web-UI-based, encrypted, deduplicated backups of the remaining data.
 - The web UI password and the key that encrypts Duplicati's own database (backup passphrases,
   destination credentials) come from Vault (AppRole entrypoint, see `secrets-vault/`). The
   container refuses to start without the key rather than storing these secrets in plain text.
+- It only sees `/data/backup`, mounted read-only: it copies backups off-site and cannot change them.
+- Its own data folder is a bind mount, not the image's anonymous volume, so the job definitions
+  are part of the Docker backup.
 - Reachable from trusted networks only (`only-trusted`). There is deliberately **no Authentik** in front of it:
   Duplicati's new web UI handles its own login tokens, and the forward-auth layer raced with
   them, which caused intermittent authentication failures. The VPN plus Duplicati's own password

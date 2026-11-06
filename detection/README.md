@@ -56,6 +56,9 @@ Zeit: 27.10.2026 19:09
   message says *who*, *from where* or *which process*, plus the command to look at details.
 - **auditd** (`auditd/`) watches a short list of files and tags every record with one key;
   the journal carries the records to Loki.
+- **Disk warnings also reach Telegram** (`smart/smartd-telegram.sh`, a smartd run.d hook). A USB
+  disk hang once produced only a mail to root that nobody read. The credentials are not in
+  Vault, so the warning also arrives when Vault is down.
 - **Every rule is tested** with a harmless trigger after each change:
   [runbook](alert-tests.md).
 
@@ -77,6 +80,7 @@ Pitfalls I ran into:
 |---|---|
 | `grafana-alerting/` | contact point (`00-`) and one alert rule per file |
 | `auditd/` | audit watch list and installer |
+| `smart/` | smartd hook: disk warnings via Telegram |
 | `alert-tests.md` | test runbook: one harmless trigger per rule |
 | `003-detection-as-code.md` | ADR |
 

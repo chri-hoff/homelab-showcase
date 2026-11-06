@@ -106,7 +106,10 @@ echo "==> Dienste neu laden"
 systemctl daemon-reload
 systemctl restart crowdsec
 systemctl restart crowdsec-firewall-bouncer
-docker kill -s HUP prometheus >/dev/null && echo "    Prometheus neu geladen"
+# Nicht "docker kill -s HUP": Das setzt HasBeenManuallyStopped, und unless-stopped
+# startet Prometheus nach dem nächsten Reboot nicht mehr (Ausfall 2026-11-04).
+prometheus_pid=$(docker inspect --format '{{.State.Pid}}' prometheus 2>/dev/null || echo 0)
+if [ "$prometheus_pid" -gt 0 ]; then kill -HUP "$prometheus_pid" && echo "    Prometheus neu geladen"; fi
 
 sleep 5
 echo

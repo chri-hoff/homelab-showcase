@@ -11,6 +11,9 @@
     # Vault creates the new file itself when it reopens it (audit device option mode=0600)
     nocreate
     postrotate
-        /usr/bin/docker kill --signal=HUP vault >/dev/null 2>&1 || true
+        # Not "docker kill --signal": it sets HasBeenManuallyStopped, so unless-stopped
+        # would not bring Vault back after the next reboot (outage 2026-11-04).
+        pid=$(/usr/bin/docker inspect --format '{{.State.Pid}}' vault 2>/dev/null || echo 0)
+        if [ "$pid" -gt 0 ]; then kill -HUP "$pid"; fi
     endscript
 }

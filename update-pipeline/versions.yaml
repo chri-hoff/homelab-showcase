@@ -3,10 +3,10 @@
 
 services:
   adguard:
-    version: "v0.107.79"
+    version: "v0.107.80"
     image: "docker.io/adguard/adguardhome"
     stack: "adguard"
-    last_updated: "2026-08-19"
+    last_updated: "2026-11-04"
     updateable: true
     breaking_changes: false
     notes: ""
@@ -32,15 +32,6 @@ services:
   cadvisor:
     version: "0.60.6"
     image: "ghcr.io/google/cadvisor"
-    stack: "cadvisor"
-    last_updated: "2026-10-27"
-    updateable: true
-    breaking_changes: false
-    notes: "automatisch erkannt (Check-Lauf)"
-
-  cadvisor-cadvisor:
-    version: "v0.55.1"
-    image: "gcr.io/cadvisor/cadvisor"
     stack: "cadvisor"
     last_updated: "2026-10-27"
     updateable: true
@@ -93,10 +84,10 @@ services:
     notes: "regular update"
 
   kestra:
-    version: "v1.3.45"
+    version: "v1.3.46"
     image: "kestra/kestra"
     stack: "kestra"
-    last_updated: "2026-10-29"
+    last_updated: "2026-11-05"
     updateable: false
     breaking_changes: false
     notes: "regular update"
@@ -120,19 +111,19 @@ services:
     notes: ""
 
   mindwtr:
-    version: "1.3.7"
+    version: "1.3.8"
     image: "ghcr.io/dongdongbh/mindwtr-cloud"
     stack: "mindwtr"
-    last_updated: "2026-10-23"
+    last_updated: "2026-11-05"
     updateable: true
     breaking_changes: false
     notes: "regular update"
 
   n8n:
-    version: "2.46.3"
+    version: "2.47.2"
     image: "n8nio/n8n"
     stack: "n8n"
-    last_updated: "2026-10-30"
+    last_updated: "2026-11-05"
     updateable: true
     breaking_changes: false
     notes: "regular update"
@@ -165,10 +156,10 @@ services:
     notes: ""
 
   prometheus:
-    version: "v3.15.1"
+    version: "v3.16.0"
     image: "prom/prometheus"
     stack: "prometheus"
-    last_updated: "2026-10-27"
+    last_updated: "2026-11-06"
     updateable: true
     breaking_changes: false
     notes: "automatisch erkannt (Check-Lauf)"
@@ -244,19 +235,19 @@ services:
     notes: "automatisch erkannt (Check-Lauf)"
 
   traefik:
-    version: "v3.7.16"
+    version: "v3.7.17"
     image: "traefik"
     stack: "traefik"
-    last_updated: "2026-10-21"
+    last_updated: "2026-10-31"
     updateable: false
     breaking_changes: false
     notes: ""
 
   uptime-kuma:
-    version: "2.5.8"
+    version: "2.5.9"
     image: "louislam/uptime-kuma"
     stack: "uptime-kuma"
-    last_updated: "2026-10-26"
+    last_updated: "2026-11-01"
     updateable: true
     breaking_changes: false
     notes: "regular update"
@@ -271,11 +262,16 @@ services:
     notes: "Security Update"
 
   vaultwarden:
-    version: "1.37.4"
+    version: "1.37.5"
     image: "vaultwarden/server"
     stack: "vaultwarden"
-    last_updated: "2026-10-19"
+    last_updated: "2026-11-02"
     updateable: true
     breaking_changes: false
     notes: "Änderung von latest auf fixed version 1.37.1"
+    
+  # more services...
 
+app:
+  version: "0.1"
+  last_full_update: "2026-07-26"

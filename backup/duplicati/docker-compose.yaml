@@ -37,12 +37,15 @@ services:
       - DUPLICATI__WEBSERVICE_INTERFACE=any
       - DUPLICATI__WEBSERVICE_ALLOWED_HOSTNAMES=*
     volumes:
-      - /opt/docker/duplicati/config:/config
-      - /data/backup:/backups
+      # Duplicati's data folder (jobs, settings, encrypted destination credentials). Fixed path
+      # instead of the image's anonymous volume, so the Docker backup covers it and a volume
+      # prune cannot delete it. Must be owned by root: no DAC_OVERRIDE, see the hardening below.
+      - /opt/docker/duplicati/data:/data
       # #126: only what is backed up, no longer the whole host (/:/source:ro made
-      # /opt/docker/secrets -- every AppRole -- readable). Same path inside the
-      # container as before, so existing job sources (/source/data/backup/...) stay valid.
-      - /data/backup:/source/data/backup:ro
+      # /opt/docker/secrets -- every AppRole -- readable). Read-only: Duplicati only syncs
+      # this to OneDrive, so a compromised Duplicati cannot delete or alter the backups.
+      # Restores have to go to another location.
+      - /data/backup:/backups:ro
     secrets:
       - duplicati_vault_role_id
       - duplicati_vault_secret_id

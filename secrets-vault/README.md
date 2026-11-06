@@ -67,8 +67,9 @@ uses the same pattern for all of its services.
   `scripts/vault-unseal.fish` asks for the keys with hidden input and re-checks the seal status
   after each key. Nothing is stored or logged.
 - **Seal monitoring:** `scripts/check_vault_sealed.sh` runs from cron and sends a Telegram
-  message on every status change. Its own Telegram credentials are deliberately **not** in
-  Vault: an alert that needs Vault to send "Vault is sealed" would never fire.
+  message on every status change between unsealed, sealed and unreachable. Its own Telegram
+  credentials are deliberately **not** in Vault: an alert that needs Vault to send "Vault is
+  sealed" would never fire.
 - **Never auto-updated:** a Vault restart means a sealed Vault, which means every service that
   fetches a secret at startup fails. The update pipeline excludes Vault for that reason.
 - **Backend network only:** every consumer was checked to be on `backend` before Vault left
@@ -112,6 +113,26 @@ Decision record with alternatives (Borg copy, SOPS key, TLS on the listener, sys
   something else. I documented the decision instead of forcing it.
 - **Redis** currently runs without a password (internal backend network only). Moving it to
   Vault is open work.
+
+## Postmortem: Vault stayed off after a reboot
+
+In November 2026 an automatic reboot left Vault and Traefik stopped for about four hours, although
+both use `restart: unless-stopped`. Every service that fetches its secrets at startup went into a
+restart loop.
+
+- **Most likely cause:** the daily log rotation reloaded both containers with `docker kill
+  --signal`. In the Docker source (`daemon/kill.go`), any signal sent that way marks the container
+  as manually stopped, and `unless-stopped` then skips it at the next daemon start. Only these two
+  containers received such a signal, and only these two stayed off. The flag itself could not be
+  read afterwards, because the manual start had already reset it.
+- **Why it stayed hidden:** the nightly Docker backup stops and starts Traefik, which clears the
+  flag. Vault's rotation was only a few days old, and the reboot fell between rotation and backup.
+- **Why nobody was told:** the seal check treated a stopped container as an error and exited
+  without a message. It only knew "sealed" and "unsealed".
+- **Fix:** the rotation now signals the container's host PID directly, which Docker does not record
+  as a stop. "Unreachable" is now a status of its own in the seal check.
+- **Lesson:** an alert has to cover the failure where its subject is gone, not only the states the
+  subject can report itself.
 
 ## Files
 

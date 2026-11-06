@@ -21,7 +21,7 @@ echo "=== Version-gepinnte Images (Docker Hub) ==="
 echo ""
 
 python3 << PYEOF
-import urllib.request, json, re, sys, os
+import urllib.request, urllib.parse, json, re, sys, os
 
 RUNNING = """${RUNNING_IMAGES}""".strip().splitlines()
 
@@ -78,11 +78,20 @@ def version_pattern(tag):
     # Pin major, leave minor+patch open
     return rf'^{re.escape(prefix)}{major}\.\d+(\.\d+)?$'
 
-def get_latest_tags(namespace, image, pattern, n=5):
+def name_filter(tag):
+    """Literal start of the current tag up to the major version ('v1.39.1' -> 'v1.').
+    Docker Hub filters on it server side (substring); the regex still decides."""
+    m = re.match(r'^(v?\d+)\.', tag)
+    return m.group(1) + '.' if m else ''
+
+def get_latest_tags(namespace, image, pattern, n=5, name=''):
+    # Only 5 pages, newest first: without the name filter, repos with many dev builds
+    # (envoyproxy/envoy: 80,000 tags, mostly dev-<commit>) push every release out of them
     all_tags = []
     for page in range(1, 6):
         url = (f"https://hub.docker.com/v2/repositories/{namespace}/{image}"
-               f"/tags?page_size=100&page={page}")
+               f"/tags?page_size=100&page={page}"
+               + (f"&name={urllib.parse.quote(name)}" if name else ""))
         try:
             with urllib.request.urlopen(url, timeout=10) as r:
                 d = json.loads(r.read())
@@ -165,7 +174,7 @@ for raw in RUNNING:
     if registry == 'ghcr':
         tags = get_latest_tags_ghcr(ns, img, pat)
     else:
-        tags = get_latest_tags(ns, img, pat)
+        tags = get_latest_tags(ns, img, pat, name=name_filter(tag))
 
     if isinstance(tags, str):          # error message
         print(f"  [!]     {raw} — {tags}")

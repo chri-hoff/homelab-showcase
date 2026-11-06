@@ -1,10 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
-# Checks Vault's sealed status via cron and sends a Telegram message on a
-# status change (unsealed->sealed or sealed->unsealed). Alerts ONLY on a
-# status change, not on every run -- otherwise the chat would be spammed
-# every 5 minutes during longer maintenance windows.
+# Checks Vault's status via cron and sends a Telegram message on a status change
+# between unsealed, sealed and unreachable (container stopped or not answering).
+# Alerts ONLY on a status change, not on every run -- otherwise the chat would be
+# spammed every 5 minutes during longer maintenance windows.
 #
 # IMPORTANT: the Telegram credentials are deliberately NOT stored in Vault/SOPS.
 # This script alerts exactly when Vault can no longer serve secrets -- if it
@@ -76,15 +76,15 @@ mkdir -p "$STATE_DIR"
 STATUS_OUTPUT="$(docker exec "$VAULT_CONTAINER" vault status -address="$VAULT_ADDR" 2>&1)" || true
 SEALED="$(printf '%s\n' "$STATUS_OUTPUT" | awk '/^Sealed/ {print $2}')"
 
-if [ "$SEALED" != "true" ] && [ "$SEALED" != "false" ]; then
-    log_error "Konnte Sealed-Status nicht ermitteln (Container down/unreachable?): ${STATUS_OUTPUT}"
-    exit 1
-fi
-
+# A stopped container counts as a state of its own: exiting here kept this alert silent
+# during the outage of 2026-11-04, when Vault stayed off for four hours after a reboot.
 if [ "$SEALED" = "true" ]; then
     CURRENT_STATE="sealed"
-else
+elif [ "$SEALED" = "false" ]; then
     CURRENT_STATE="unsealed"
+else
+    CURRENT_STATE="unreachable"
+    log_error "Konnte Sealed-Status nicht ermitteln (Container down/unreachable?): ${STATUS_OUTPUT}"
 fi
 
 PREVIOUS_STATE="unknown"
@@ -99,7 +99,9 @@ fi
 
 log "Statuswechsel: ${PREVIOUS_STATE} -> ${CURRENT_STATE}"
 
-if [ "$CURRENT_STATE" = "sealed" ]; then
+if [ "$CURRENT_STATE" = "unreachable" ]; then
+    send_telegram "🚨 Vault ist NICHT ERREICHBAR auf $(hostname -s) (Container gestoppt?). Prüfen mit: docker ps -a --filter name=vault"
+elif [ "$CURRENT_STATE" = "sealed" ]; then
     send_telegram "🔒 Vault ist VERSIEGELT auf $(hostname -s). Bitte manuell unsealen (Fish-Funktion vault-unseal oder siehe services/vault/README.md)."
 elif [ "$PREVIOUS_STATE" != "unknown" ]; then
     # On the very first run (no STATE_FILE) don't send an "unsealed again"
