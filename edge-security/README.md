@@ -7,7 +7,7 @@ independent layers, and each layer can fail without the next one depending on it
 flowchart LR
     C(["Client"]) --> FW["Host: nftables<br/>+ CrowdSec firewall bouncer<br/>(INPUT and DOCKER-USER)"]
     FW --> T["Traefik<br/>TLS via ACME DNS challenge"]
-    T --> MW["Middleware chain per service:<br/>IP allowlist -> security headers -><br/>rate limit -> CrowdSec plugin -> Authentik"]
+    T --> MW["Middleware chain per service:<br/>IP allowlist -> security headers -><br/>rate limit -> CrowdSec plugin (IP + WAF) -> Authentik"]
     MW --> S["Service container"]
     SP["docker-socket-proxy<br/>(GET only)"] -. "routing labels" .-> T
     T -. "JSON access log" .-> CS["CrowdSec engine<br/>(+ custom 401 scenario)"]
@@ -39,7 +39,7 @@ middlewares in its own labels. Exposure decisions live in one file and are easy 
 | `authentik` | forward auth / SSO in front of apps without their own login |
 | `secure-headers` | HSTS, no sniffing, frame protection (relaxed only where needed, e.g. Collabora inside Nextcloud's iframe) |
 | `*-ratelimit` | per service, tuned to its traffic pattern |
-| `crowdsec` | Traefik bouncer plugin, blocks known-bad IPs before the app sees the request |
+| `crowdsec` | Traefik bouncer plugin: blocks known-bad IPs and, on public chains, sends every request to CrowdSec's WAF before the app sees it |
 
 Examples: `std-adm-internal-chain` = trusted networks + Authentik, `vaultwarden-public-chain` = headers +
 rate limit + CrowdSec (public, the app has its own strong auth), `vault-chain` = trusted networks only.
@@ -61,6 +61,18 @@ has no Docker socket: only the embedded outpost is used, so it needs no Docker i
   counts 401 responses to POST requests, which misses basic auth and token APIs (GET). This
   scenario counts every 401 (10 attempts, leak rate 1 per 10 s) and excludes Nextcloud's
   WebDAV/OCS sync, whose clients produce 401 series by design.
+- **WAF (AppSec):** on the public chains the Traefik plugin also sends each request to
+  CrowdSec's AppSec component on the host (`acquis.d/appsec.yaml` in the Ansible role), with
+  virtual patching for known CVEs and generic attack rules. It fails open: if CrowdSec is down
+  or restarting, requests pass with IP blocking only, so a CrowdSec update never takes the
+  public services offline. The OWASP Core Rule Set is deliberately off because of its false
+  positives. Verified with a request for `/.env` (403, rule `vpatch-env-access`) and then the
+  real workloads: a 2 GB Nextcloud desktop upload, Collabora editing, Vaultwarden and Authentik.
+  One false positive showed up within the first hour: the Nextcloud client syncs folders that
+  contain git repositories, and `vpatch-git-config` blocked its WebDAV requests for
+  `.git/config`. The fix is a small local AppSec config that removes this one rule for
+  `/remote.php/` only (`appsec-configs/homelab-appsec-nextcloud.yaml`); scanners asking any other
+  service for `.git/config` are still blocked.
 - **ASN blocklist** for cloud networks that scan from a new IP every time, see below.
 - **Escalating bans** for repeat offenders, the Authentik log parser, and Telegram notifications
   (`crowdsec/crowdsec-telegram.sh`, which asks for the credentials interactively so nothing
@@ -127,8 +139,8 @@ The Supabase side is in `update-pipeline/supabase/`: `record-crowdsec-alerts.py`
 - `host/host-firewall.nft`: an nftables table for services that listen on the host itself. It
   deliberately reloads only its own table (no `flush ruleset`), so Docker's and CrowdSec's
   rules stay untouched.
-- Containers may only reach what they need on the host: the CrowdSec LAPI for Traefik's
-  bouncer, SSH for the deploy wrapper (from Kestra's fixed address only), and 80/443. The last
+- Containers may only reach what they need on the host: the CrowdSec LAPI and the AppSec
+  port for Traefik's bouncer, SSH for the deploy wrapper (from Kestra's fixed address only), and 80/443. The last
   one is needed because a container in Traefik's own network that calls a public hostname goes
   through `docker-proxy` on the host, not through the port DNAT. Nextcloud and Collabora broke
   when I first left it out; the firewall's drop log showed why.

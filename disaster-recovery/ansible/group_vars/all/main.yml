@@ -1,0 +1,15 @@
+---
+# Repo root on the controller (laptop). Roles take their config files from the existing
+# scripts/ and config/ trees, so there is one source for each file.
+homelab_repo: "{{ playbook_dir }}/.."
+
+admin_user: admin
+
+# authorized_keys of admin_user (public keys, not secret), written exclusively: keys not
+# in this file are removed. Missing file = keys are left as they are (installer).
+admin_authorized_keys_file: "{{ playbook_dir }}/files/ssh/{{ admin_user }}.authorized_keys"
+
+# Owner of /opt/docker/loki. The UID must match the one on the old host, otherwise the
+# files restored from Borg belong to nobody. On the old host:  id svc-docker
+svc_docker_uid: 118
+svc_docker_gid: 124

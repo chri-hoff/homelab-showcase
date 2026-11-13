@@ -5,7 +5,10 @@ http:
         bouncer:
           enabled: true
           crowdsecMode: live
-          crowdsecAppsecEnabled: false
+          crowdsecAppsecEnabled: true
+          crowdsecAppsecHost: 198.51.100.10:7422
+          crowdsecAppsecFailureBlock: false
+          crowdsecAppsecUnreachableBlock: false
 
           # Connection to the CrowdSec Local API on the host
           crowdsecLapiScheme: http

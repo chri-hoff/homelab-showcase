@@ -1,0 +1,47 @@
+---
+# Hub items installed by hand on the old host ("cscli hub list", DR inventory 2026-11-09).
+# Dependencies (linux, sshd, base-http-scenarios, http-cve, whitelist-good-actors ...)
+# come with their collections.
+crowdsec_collections:
+  # AppSec/WAF rules (#190); appsec-default config comes with them
+  - crowdsecurity/appsec-generic-rules
+  - crowdsecurity/appsec-virtual-patching
+  - crowdsecurity/http-dos
+  - crowdsecurity/iptables
+  - crowdsecurity/linux-lpe
+  - crowdsecurity/mariadb
+  - crowdsecurity/nextcloud
+  - crowdsecurity/traefik
+  - crowdsecurity/wireguard
+  - Dominic-Wagner/vaultwarden
+  - firix/authentik
+crowdsec_parsers:
+  - corvese/apache-guacamole-logs
+  - crowdsecurity/whitelists
+crowdsec_scenarios:
+  - corvese/apache-guacamole_bf
+  - corvese/apache-guacamole_user_enum
+  - crowdsecurity/appsec-native
+  - crowdsecurity/appsec-vpatch
+  - crowdsecurity/auditd-base64-exec-behavior
+  - crowdsecurity/auditd-postexploit-exec-from-net
+  - jusabatier/apereo-cas-bf
+  - jusabatier/apereo-cas-slow-bf
+
+# Local scenarios from the repo (config/crowdsec/scenarios/*.yaml)
+crowdsec_local_scenarios_dir: "{{ homelab_repo }}/config/crowdsec/scenarios"
+
+# LAPI on all addresses: Traefik's bouncer plugin connects to <host>:8080 from the
+# Docker networks (host-firewall.nft only lets 172.21/16 and 172.22/16 in).
+crowdsec_listen_uri: 0.0.0.0:8080
+
+# Ban notifications via Telegram. Bot token and chat ID are read from the seal-alert
+# file restored with /opt/docker (no extra copy of the token, see
+# docs/runbooks/telegram-token-rotation.md). Not there yet = no notification; the
+# next run of site.yml after the restore adds it.
+crowdsec_telegram: true
+crowdsec_telegram_env: /opt/docker/secrets/vault-unseal-alert.env
+
+# Traefik bouncer: its key is in Traefik's restored dynamic config; it is registered
+# with the new LAPI under the same key, so Traefik needs no change.
+crowdsec_traefik_middleware: /opt/docker/traefik/config/conf/middleware-crowdsec.yaml

@@ -1,0 +1,265 @@
+---
+# CrowdSec engine + LAPI + firewall bouncer on the host, as on the old host
+# (#123, #126, #127, scripts/security/apply-host-hardening.sh).
+
+# Only fetched when missing: the key server ignores If-Modified-Since, so in check mode
+# get_url would report a change on every run. The key itself practically never changes.
+- name: CrowdSec apt keyring present
+  ansible.builtin.stat:
+    path: /etc/apt/keyrings/crowdsec_crowdsec-archive-keyring.asc
+  register: crowdsec_keyring
+
+- name: CrowdSec apt keyring
+  ansible.builtin.get_url:
+    url: https://packagecloud.io/crowdsec/crowdsec/gpgkey
+    dest: /etc/apt/keyrings/crowdsec_crowdsec-archive-keyring.asc
+    owner: root
+    group: root
+    mode: "0644"
+  when: not crowdsec_keyring.stat.exists
+
+- name: CrowdSec apt repository
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/crowdsec_crowdsec.list
+    content: |
+      deb [signed-by=/etc/apt/keyrings/crowdsec_crowdsec-archive-keyring.asc] https://packagecloud.io/crowdsec/crowdsec/any/ any main
+    owner: root
+    group: root
+    mode: "0644"
+  register: crowdsec_repo
+
+# Engine first: the bouncer package registers its API key with the local LAPI on install.
+- name: CrowdSec engine
+  ansible.builtin.apt:
+    name: crowdsec
+    state: present
+    update_cache: "{{ crowdsec_repo is changed }}"
+
+- name: Firewall bouncer
+  ansible.builtin.apt:
+    name: crowdsec-firewall-bouncer-iptables
+    state: present
+
+# --- Engine configuration ---
+- name: LAPI listens on all addresses
+  ansible.builtin.lineinfile:
+    path: /etc/crowdsec/config.yaml
+    regexp: '^(\s*)listen_uri:'
+    line: '    listen_uri: {{ crowdsec_listen_uri }}'
+  notify: Restart crowdsec
+
+- name: Acquisition (Docker labels; files and journal in acquis.d)
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/etc/crowdsec/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - acquis.yaml
+    - acquis.d/traefik.yaml
+    - acquis.d/nextcloud.yaml
+    - acquis.d/setup.sshd.yaml
+    - acquis.d/appsec.yaml
+  notify: Restart crowdsec
+
+# Local AppSec configs (rule exceptions), referenced by acquis.d/appsec.yaml. Must be in
+# place before the restart, otherwise the AppSec listener does not start.
+- name: Local AppSec configs
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/etc/crowdsec/appsec-configs/{{ item | basename }}"
+    owner: root
+    group: root
+    mode: "0644"
+  with_fileglob: "appsec-configs/*.yaml"
+  notify: Restart crowdsec
+
+- name: Hub index
+  ansible.builtin.command: cscli hub update
+  changed_when: false
+  check_mode: false
+
+- name: Installed hub items
+  ansible.builtin.command: cscli {{ item }} list -o json
+  loop: [collections, parsers, scenarios]
+  register: crowdsec_installed
+  changed_when: false
+  check_mode: false
+
+- name: Missing hub items installed
+  ansible.builtin.command: cscli {{ item.0 }} install {{ item.1 }}
+  loop: >-
+    {{ ([['collections'] | product(crowdsec_collections)]
+        + [['parsers'] | product(crowdsec_parsers)]
+        + [['scenarios'] | product(crowdsec_scenarios)]) | flatten(levels=1) }}
+  when: >-
+    item.1 not in ((crowdsec_installed.results | selectattr('item', 'equalto', item.0) | first).stdout
+      | from_json).get(item.0) | default([], true) | map(attribute='name') | list
+  changed_when: true
+  notify: Restart crowdsec
+
+# Local change on the old host (cscli showed the item as tainted): stricter than the
+# hub default -- 2 failed logins per minute instead of 5, then 60 min instead of 5 min
+# blackhole. Applied to both buckets of the scenario (failed auth, distinct usernames).
+- name: Vaultwarden brute force stricter than the hub default
+  ansible.builtin.replace:
+    path: /etc/crowdsec/scenarios/vaultwarden-bf.yaml
+    regexp: '{{ item.regexp }}'
+    replace: '{{ item.replace }}'
+  loop:
+    - { regexp: '^capacity: 5$', replace: 'capacity: 2' }
+    - { regexp: '^blackhole: 5m$', replace: 'blackhole: 60m' }
+  notify: Restart crowdsec
+
+- name: Local scenarios from the repo
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/etc/crowdsec/scenarios/{{ item | basename }}"
+    owner: root
+    group: root
+    mode: "0644"
+  with_fileglob: "{{ crowdsec_local_scenarios_dir }}/*.yaml"
+  notify: Restart crowdsec
+
+# --- Telegram notification: credentials from the restored seal-alert file ---
+- name: Seal-alert credentials present
+  ansible.builtin.stat:
+    path: "{{ crowdsec_telegram_env }}"
+  register: crowdsec_telegram_env_stat
+  when: crowdsec_telegram
+
+- name: Seal-alert credentials
+  ansible.builtin.slurp:
+    src: "{{ crowdsec_telegram_env }}"
+  register: crowdsec_telegram_env_raw
+  no_log: true
+  when: crowdsec_telegram and crowdsec_telegram_env_stat.stat.exists
+
+- name: Telegram notification plugin
+  ansible.builtin.template:
+    src: telegram.yaml.j2
+    dest: /etc/crowdsec/notifications/telegram.yaml
+    owner: root
+    group: root
+    mode: "0600"
+  vars:
+    crowdsec_tg_env: "{{ crowdsec_telegram_env_raw.content | b64decode }}"
+    crowdsec_tg_token: "{{ crowdsec_tg_env | regex_search('(?m)^TELEGRAM_BOT_TOKEN=\"?([^\"\\n]+)', '\\1') | first }}"
+    crowdsec_tg_chat: "{{ crowdsec_tg_env | regex_search('(?m)^TELEGRAM_CHAT_ID=\"?([^\"\\n]+)', '\\1') | first }}"
+  no_log: true
+  when: crowdsec_telegram and crowdsec_telegram_env_stat.stat.exists
+  notify: Restart crowdsec
+
+- name: Telegram notification active
+  ansible.builtin.set_fact:
+    crowdsec_telegram_enabled: "{{ crowdsec_telegram and (crowdsec_telegram_env_stat.stat.exists | default(false)) }}"
+
+- name: Profiles (escalating ban duration, Telegram notification)
+  ansible.builtin.template:
+    src: profiles.yaml.j2
+    dest: /etc/crowdsec/profiles.yaml
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart crowdsec
+
+- name: Note on missing Telegram credentials
+  ansible.builtin.debug:
+    msg: "{{ crowdsec_telegram_env }} fehlt (noch nicht restauriert): keine Telegram-Meldungen, bis site.yml nach dem Restore erneut läuft."
+  when: crowdsec_telegram and not crowdsec_telegram_env_stat.stat.exists
+
+- name: Engine configuration valid
+  ansible.builtin.command: crowdsec -t
+  changed_when: false
+  check_mode: false
+
+- name: Apply engine configuration
+  ansible.builtin.meta: flush_handlers
+
+# --- Firewall bouncer: keep the generated API key, set everything else ---
+- name: Current bouncer configuration
+  ansible.builtin.slurp:
+    src: /etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml
+  register: crowdsec_bouncer_raw
+  no_log: true
+
+- name: Firewall bouncer configuration
+  ansible.builtin.template:
+    src: crowdsec-firewall-bouncer.yaml.j2
+    dest: /etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml
+    owner: root
+    group: root
+    mode: "0600"
+  vars:
+    crowdsec_bouncer_key: >-
+      {{ crowdsec_bouncer_raw.content | b64decode
+         | regex_search('(?m)^api_key:\s*(\S+)', '\1') | first }}
+  no_log: true
+  notify: Restart firewall bouncer
+
+- name: Bouncer drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/crowdsec-firewall-bouncer.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Bouncer waits for Docker (DOCKER-USER exists only then)
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/crowdsec-firewall-bouncer.service.d/docker.conf
+    content: |
+      # DOCKER-USER existiert erst, wenn Docker läuft
+      [Unit]
+      After=docker.service
+      Requires=docker.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart firewall bouncer
+
+# --- Traefik bouncer: same key as in the restored Traefik config ---
+- name: Traefik middleware config present
+  ansible.builtin.stat:
+    path: "{{ crowdsec_traefik_middleware }}"
+  register: crowdsec_traefik_stat
+
+- name: Traefik middleware config
+  ansible.builtin.slurp:
+    src: "{{ crowdsec_traefik_middleware }}"
+  register: crowdsec_traefik_raw
+  no_log: true
+  when: crowdsec_traefik_stat.stat.exists
+
+- name: Registered bouncers
+  ansible.builtin.command: cscli bouncers list -o json
+  register: crowdsec_bouncers
+  changed_when: false
+  check_mode: false
+
+- name: Traefik bouncer registered with its existing key
+  ansible.builtin.command:
+    argv:
+      - cscli
+      - bouncers
+      - add
+      - traefik-bouncer
+      - --key
+      - >-
+        {{ crowdsec_traefik_raw.content | b64decode
+           | regex_search('crowdsecLapiKey:\s*"?([^"\s]+)', '\1') | first }}
+  no_log: true
+  changed_when: true
+  when:
+    - crowdsec_traefik_stat.stat.exists
+    - (crowdsec_bouncers.stdout | from_json | default([], true)
+       | map(attribute='name') | select('match', '^traefik-bouncer') | list | length) == 0
+
+- name: Services enabled
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+  loop: [crowdsec, crowdsec-firewall-bouncer]

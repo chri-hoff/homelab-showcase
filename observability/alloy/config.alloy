@@ -97,13 +97,14 @@ loki.process "journal" {
 // ========================== 
 // 3) BACKUP LOGFILES 
 // ========================== 
-/*
+// JSON lines of the backup scripts (docker.log, nextcloud.log). Was commented out from
+// 2026-10-27 to 2026-11-12 by accident (#172). Query in Grafana: {app="backup"},
+// e.g. {app="backup", backup_job="docker", level="ERROR"}.
 loki.source.file "backup_docker" { 
   targets = [ 
     { 
       __path__ = "/data/backup/ThinkCentre/log/*.log", 
       app      = "backup", 
-      kind     = "docker-backup", 
     }, 
   ] 
 
@@ -114,7 +115,10 @@ loki.source.file "backup_docker" {
     sync_period = "10s" 
   } 
 
-  tail_from_end = true 
+  // No saved position yet -> read the files from the start (they keep at most 1000 lines).
+  // Lines older than Loki's retention (7 d) are rejected once; after that the position
+  // in /var/lib/alloy applies and nothing is read twice.
+  tail_from_end = false 
 } 
 
 loki.process "backup_docker" { 
@@ -124,7 +128,7 @@ loki.process "backup_docker" {
     expressions = { 
       timestamp            = "timestamp", 
       level                = "level", 
-      job                  = "job", 
+      backup_job           = "job", 
       host                 = "host", 
       message              = "message", 
       archive              = "archive", 
@@ -152,13 +156,13 @@ loki.process "backup_docker" {
     format = "RFC3339" 
   } 
 
+  // "job" from the JSON becomes backup_job: job="docker" is already the container logs.
+  // app="backup" is a static label of the target above.
   stage.labels { 
     values = { 
-      app   = "app", 
-      kind  = "kind", 
-      job   = "job", 
-      host  = "host", 
-      level = "level", 
+      backup_job = "backup_job", 
+      host       = "host", 
+      level      = "level", 
     } 
   } 
 
@@ -166,7 +170,7 @@ loki.process "backup_docker" {
     source = "message" 
   } 
 } 
-*/
+
 // ========================== 
 // 4) PUSH TO LOKI 
 // ========================== 

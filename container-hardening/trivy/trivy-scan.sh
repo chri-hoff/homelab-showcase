@@ -8,7 +8,8 @@
 # and updated once per run.
 #
 # Run:   sudo homelab-deploy trivy-scan   (or bash scripts/security/trivy-scan.sh as root)
-# Used:  services/kestra/flows/trivy-scan.yml (weekly + Telegram)
+# Used:  services/kestra/flows/trivy-scan.yml (weekly + Telegram); writes
+#        /var/lib/homelab-checks/trivy.tsv for the daily system check (ADR 007)
 # Exit:  0 = scan ran (with or without findings), 1 = at least one image could not be scanned
 set -uo pipefail
 
@@ -52,6 +53,12 @@ for img in $IMAGES; do
       end' <<<"$REPORT")
   if [[ -n "$LINE" ]]; then FINDINGS+=("$LINE"); else CLEAN=$((CLEAN + 1)); fi
 done
+
+# State for the daily system check (ADR 007): one line per image with findings
+STATE_DIR=/var/lib/homelab-checks
+mkdir -p "$STATE_DIR"
+{ echo "# trivy-scan $(date -Is)"; printf '%s\n' "${FINDINGS[@]}"; } > "$STATE_DIR/trivy.tsv.new" \
+  && mv "$STATE_DIR/trivy.tsv.new" "$STATE_DIR/trivy.tsv"
 
 echo "Trivy-Scan $(date '+%Y-%m-%d') – fixbare HIGH/CRITICAL"
 echo "$(wc -w <<<"$IMAGES") Images: ${#FINDINGS[@]} mit Funden, $CLEAN sauber, ${#FAILED[@]} Fehler"

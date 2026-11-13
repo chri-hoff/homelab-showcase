@@ -1,0 +1,9 @@
+## {{ ansible_managed }}
+## Source: scripts/security/homelab-audit.rules
+{% for line in auditd_rules %}
+{% if line not in auditd_missing %}
+{{ line }}
+{% else %}
+## skipped (path missing on this host): {{ line }}
+{% endif %}
+{% endfor %}

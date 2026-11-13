@@ -1,0 +1,21 @@
+---
+# Deploy one service with the SOPS age key of the repo user (/home survives), the same
+# way sops-update.fish does: decrypt <svc>.env.sops next to the compose file, compose up
+# with the version from config/versions.yaml, remove the plain .env again.
+- name: "SOPS key from /home, deploy {{ restore_svc }}"
+  ansible.builtin.shell: |
+    set -euo pipefail
+    svc={{ restore_svc | quote }}
+    dir={{ restore_repo | quote }}/services/$svc
+    env=$dir/$svc.env
+    trap 'rm -f "$env"' EXIT
+    ( umask 077
+      SOPS_AGE_KEY_FILE={{ restore_sops_key | quote }} \
+        sops --decrypt --input-type dotenv --output-type dotenv "$env.sops" > "$env" )
+    version=$(yq -r ".services.\"$svc\".version // \"\"" {{ restore_repo | quote }}/config/versions.yaml)
+    [ "$version" = latest ] && { echo "FEHLER: $svc steht auf latest"; exit 1; }
+    [ -n "$version" ] && export VERSION=$version
+    docker compose --env-file "$env" -f "$dir/docker-compose.yaml" up -d --quiet-pull 2>&1
+  args:
+    executable: /bin/bash
+  changed_when: true

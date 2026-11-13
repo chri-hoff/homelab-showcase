@@ -37,8 +37,12 @@ flowchart LR
 ## Details worth copying
 
 - **Backup logs in Loki:** Alloy tails the log files written by the backup scripts
-  (`backup/nextcloud-borg/`) and labels them per job, so a failed backup shows up in Grafana
-  next to the container logs.
+  (`backup/nextcloud-borg/`) and labels them per job (`backup_job`), so a failed backup shows
+  up in Grafana next to the container logs. Lesson learned: this section was commented out for
+  two weeks and nothing complained, because "no logs" looks the same as "no errors". The
+  [weekly system check](../system-checks/) now reads the backup results from the log files on
+  the host, independent of Loki. Also note that `tail_from_end` only applies when Alloy has no
+  saved position for a file; to backfill, the position has to go.
 - **The systemd journal is the important source.** SSH logins and sudo usage only exist there,
   not in any container log. Alloy turns `SYSLOG_IDENTIFIER` into a label (`syslog_identifier`),
   which makes alert queries simple. Note that `stage.labels` maps label names to *extracted

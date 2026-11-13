@@ -1,0 +1,6 @@
+#!/usr/sbin/nft -f
+# {{ ansible_managed }}
+# Loaded after host-firewall.nft (host-firewall.service). Host-specific additions only.
+{% if firewall_extra_admin_v4 | length > 0 %}
+add element inet host-firewall admin_v4 { {{ firewall_extra_admin_v4 | join(', ') }} }
+{% endif %}

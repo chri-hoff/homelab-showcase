@@ -66,6 +66,22 @@ Kestra flow runs it on the host through the deploy wrapper and reports the resul
 - Passwords stay inside the containers, files and directory are readable by root only.
   Retention is 14 days plus the Sunday dumps of 8 weeks, as for the Vault snapshots.
 
+## Docker data: stop and start in order
+
+The nightly Borg backup of `/opt/docker` stops the containers for a consistent copy (the script
+itself is not part of this export). The first version restarted them all at once. One night
+Kestra came up before its Postgres, failed with an unknown host, and the JVM hung instead of
+exiting, so `restart: unless-stopped` never kicked in. Kestra was down for hours.
+
+- **Apps stop first, databases last; databases start first.** The script waits until each
+  database container reports healthy (at most 3 minutes) before it starts the apps. The error
+  trap uses the same ordered start, so a failed backup does not reintroduce the race.
+- **Telegram on every run**, like the Nextcloud backup: success, success with warnings, or
+  failure with exit code and counts, sent from the EXIT trap so a crash is reported too.
+- **Defense in depth in the app:** Kestra's entrypoint waits up to 5 minutes for Postgres
+  before starting the JVM and otherwise exits with an error, so Docker restarts it
+  (`update-pipeline/kestra/docker-compose.yaml`).
+
 ## Duplicati (`duplicati/`)
 
 Web-UI-based, encrypted, deduplicated backups of the remaining data.
@@ -80,5 +96,15 @@ Web-UI-based, encrypted, deduplicated backups of the remaining data.
   Duplicati's new web UI handles its own login tokens, and the forward-auth layer raced with
   them, which caused intermittent authentication failures. The VPN plus Duplicati's own password
   turned out to be the stable combination.
+- **Results are reported, not just stored.** Duplicati keeps its results in its own database;
+  nothing shows up in `docker logs`. During a OneDrive outage the upload verification failed
+  with HTTP 401 for hours, and only an e-mail said so. Now every job posts its result
+  (`send-http-url`, format `Json`, level `all`, set per job) to a Kestra webhook
+  ([`duplicati-report.yml`](duplicati/duplicati-report.yml)). Anything but `Success` goes to
+  Telegram at once; every report updates a small state file per job, which the
+  [weekly system check](../system-checks/) turns into an issue when a job has not succeeded for
+  26 hours, failed during the week, or stopped reporting altogether. The receiver
+  ([`duplicati-report.py`](duplicati/duplicati-report.py)) accepts JSON and form-encoded bodies
+  and strips URLs, because the error texts contain signed download links of the backup target.
 
 Hostnames and IP ranges are placeholders (`example.com`, RFC 5737 ranges).

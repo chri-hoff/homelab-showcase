@@ -145,8 +145,10 @@ services:
       - ./volumes/db/logs.sql:/docker-entrypoint-initdb.d/migrations/99-logs.sql
       - ./volumes/db/pooler.sql:/docker-entrypoint-initdb.d/migrations/99-pooler.sql
       - /opt/docker/supabase/db/data:/var/lib/postgresql/data
-      # pgsodium key must survive restarts
-      - db-config:/etc/postgresql-custom
+      # pgsodium root key: must survive restarts AND be in the backup -- without it
+      # everything encrypted with pgsodium/Supabase Vault is unreadable. Bind mount under
+      # /opt/docker so the Borg backup covers it (#157; was the named volume db-config).
+      - /opt/docker/supabase/db/config:/etc/postgresql-custom
       - supabase-vault-secrets:/vault-secrets:ro
     healthcheck:
       test: [ "CMD", "pg_isready", "-U", "postgres", "-h", "localhost" ]
@@ -450,7 +452,6 @@ services:
       backend:
 
 volumes:
-  db-config:
   supabase-vault-secrets:
 
 networks:

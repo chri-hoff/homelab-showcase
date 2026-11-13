@@ -1,0 +1,30 @@
+---
+# Host rebuild for disaster recovery (#157). Ansible builds the host; the data comes
+# from Borg/Duplicati and the Vault raft snapshot.
+#
+#   cd ansible
+#   ansible-galaxy collection install -r requirements.yml
+#   ansible-playbook site.yml -l drtest --ask-vault-pass        # test VM
+#   ansible-playbook site.yml -l thinkcentre --check --diff -K --ask-vault-pass   # dry run
+#
+# Prompts on the real host: "BECOME password" = sudo password there, "Vault password" =
+# the ANSIBLE-VAULT password (Vaultwarden entry "Ansible-Vault", opens files/luks/*.vault).
+#
+# Run site.yml once more after the data restore: some roles pick up files that only
+# exist then (CrowdSec: Telegram credentials from the seal-alert file, Traefik bouncer
+# key from Traefik's config, Postfix: smtp credentials). auditd runs last so its watches find deploy's paths.
+
+- name: Homelab host
+  hosts: homelab
+  # Only set for the DR test VM (egress via the laptop's allowlist proxy)
+  environment: "{{ proxy_env | default({}) }}"
+  roles:
+    - base
+    - storage
+    - docker
+    - firewall
+    - crowdsec
+    - deploy
+    - backup
+    - mail
+    - auditd

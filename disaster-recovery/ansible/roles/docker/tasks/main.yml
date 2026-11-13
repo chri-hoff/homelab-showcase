@@ -1,0 +1,75 @@
+---
+# Only fetched when missing: the key server ignores If-Modified-Since, so in check mode
+# get_url would report a change on every run. The key itself practically never changes.
+- name: Docker apt keyring present
+  ansible.builtin.stat:
+    path: /etc/apt/keyrings/docker.asc
+  register: docker_keyring
+
+- name: Docker apt keyring
+  ansible.builtin.get_url:
+    url: https://download.docker.com/linux/debian/gpg
+    dest: /etc/apt/keyrings/docker.asc
+    owner: root
+    group: root
+    mode: "0644"
+  when: not docker_keyring.stat.exists
+
+- name: Docker apt repository
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/docker.list
+    content: >
+      deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc]
+      https://download.docker.com/linux/debian {{ ansible_facts['distribution_release'] }} stable
+    owner: root
+    group: root
+    mode: "0644"
+  register: docker_repo
+
+- name: Docker packages
+  ansible.builtin.apt:
+    name: "{{ docker_packages }}"
+    state: present
+    update_cache: "{{ docker_repo is changed }}"
+
+# Same file as scripts/security/apply-docker-daemon.sh installs (#103): log rotation,
+# live-restore, no-new-privileges, icc=false.
+- name: Docker daemon configuration
+  ansible.builtin.copy:
+    src: "{{ homelab_repo }}/scripts/security/docker-daemon.json"
+    dest: /etc/docker/daemon.json
+    owner: root
+    group: root
+    mode: "0644"
+    validate: dockerd --validate --config-file %s
+  notify: Restart docker
+
+- name: Docker running
+  ansible.builtin.systemd_service:
+    name: docker
+    state: started
+    enabled: true
+
+# A restart on a running host is safe thanks to live-restore; on a fresh host
+# nothing runs yet. Flush now so the networks are created with the final config.
+- name: Apply daemon configuration
+  ansible.builtin.meta: flush_handlers
+
+- name: Users in group docker
+  ansible.builtin.user:
+    name: "{{ item }}"
+    groups: [docker]
+    append: true
+  loop: "{{ docker_users }}"
+
+- name: Shared networks with fixed subnets
+  community.docker.docker_network:
+    name: "{{ item.name }}"
+    driver: bridge
+    ipam_config:
+      - subnet: "{{ item.subnet }}"
+        gateway: "{{ item.gateway }}"
+    state: present
+  loop: "{{ docker_networks }}"
+  loop_control:
+    label: "{{ item.name }} {{ item.subnet }}"

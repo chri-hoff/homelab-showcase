@@ -1,0 +1,37 @@
+---
+# Disaster-recovery test VM (#157), created and destroyed by dr-test.sh on KVM/libvirt,
+# in an isolated network without forwarding.
+# The address is passed by dr-test.sh (-e ansible_host=...), it changes with every VM.
+ansible_host: 192.0.2.10
+
+# No Wake-on-LAN in a VM
+wol_interface: ""
+
+# The VM has no data disks yet; for the full test they are attached as images later.
+storage_luks: []
+storage_mounts: []
+
+# dr-test.sh's isolated libvirt network, so the laptop keeps SSH access once the host
+# firewall is active. Only for the VM; the real host is reached over VPN or LAN.
+firewall_extra_admin_v4:
+  - 192.0.2.0/24
+
+# The VM has no route out; downloads Ansible does itself (get_url, cscli hub) go through
+# the laptop's allowlist proxy started by dr-test.sh (apt and dockerd are configured for
+# it by cloud-init).
+proxy_env:
+  http_proxy: http://192.0.2.1:8888
+  https_proxy: http://192.0.2.1:8888
+  HTTP_PROXY: http://192.0.2.1:8888
+  HTTPS_PROXY: http://192.0.2.1:8888
+  no_proxy: localhost,127.0.0.1,::1,192.0.2.0/24,172.16.0.0/12
+  NO_PROXY: localhost,127.0.0.1,::1,192.0.2.0/24,172.16.0.0/12
+
+# Isolation: the VM must not act like the real homelab. No Telegram messages from
+# CrowdSec, cron jobs written but disabled, no SMART monitoring (virtual disks), mail
+# only queued, never relayed.
+crowdsec_telegram: false
+backup_cron_enabled: false
+backup_smartd_devices: []
+backup_smartd_devicescan: false
+mail_relay_enabled: false

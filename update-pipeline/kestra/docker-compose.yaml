@@ -86,6 +86,30 @@ services:
         export SECRET_UPDATE_ON_MERGE_WEBHOOK_KEY=$$(vault_b64 kestra-webhooks update_on_merge)
         # Webhook key of crowdsec-asn-decision (Telegram buttons via telegram-listener, #127)
         export SECRET_ASN_DECISION_WEBHOOK_KEY=$$(vault_b64 kestra-webhooks asn_decision)
+        # Keys of the Telegram command flows and of the Supabase DB webhook (#157)
+        export SECRET_BACKUP_MARIADB_WEBHOOK_KEY=$$(vault_b64 kestra-webhooks backup_mariadb)
+        export SECRET_DOCKER_UPDATE_CHECK_WEBHOOK_KEY=$$(vault_b64 kestra-webhooks docker_update_check)
+        export SECRET_DAILY_SUMMARY_WEBHOOK_KEY=$$(vault_b64 kestra-webhooks daily_summary)
+        export SECRET_CANDIDATE_STATUS_WEBHOOK_KEY=$$(vault_b64 kestra-webhooks candidate_status)
+        # Duplicati result reports (send-http), also stored in Duplicati's settings
+        export SECRET_DUPLICATI_REPORT_WEBHOOK_KEY=$$(vault_b64 kestra-webhooks duplicati_report)
+        # Gitea bot kestra-bot (token scope write:issue + read:repository), ADR 007
+        export SECRET_KESTRA_BOT_GITEA_TOKEN=$$(vault_b64 kestra-gitea-bot token)
+
+        # Wait for Postgres before starting the JVM (outage 2026-11-11, see
+        # docs/system-checks/kestra-ausfall-2026-11-11.md): started without its database,
+        # Kestra failed with UnknownHostException and the JVM hung instead of exiting, so
+        # "restart: unless-stopped" never fired. After 5 min exit 1 -> Docker restarts us.
+        PG_WAIT=0
+        until python3 -c 'import socket, sys; socket.create_connection((sys.argv[1], 5432), 3).close()' "${POSTGRES_HOST:-kestra}" 2>/dev/null; do
+          PG_WAIT=$$((PG_WAIT + 1))
+          if [ "$$PG_WAIT" -ge 60 ]; then
+            echo "FEHLER: ${POSTGRES_HOST:-kestra}:5432 nach 5 Minuten nicht erreichbar -- beende, Docker startet neu" >&2
+            exit 1
+          fi
+          [ "$$PG_WAIT" -eq 1 ] && echo "Warte auf ${POSTGRES_HOST:-kestra}:5432 ..."
+          sleep 5
+        done
 
         exec /app/kestra "$$@"
       - --

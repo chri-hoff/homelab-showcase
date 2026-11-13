@@ -1,0 +1,34 @@
+# {{ ansible_managed }}
+# The API key is the one the package generated on install; Ansible keeps it.
+mode: iptables
+update_frequency: 10s
+log_mode: file
+log_dir: /var/log/
+log_level: info
+log_compression: true
+log_max_size: 100
+log_max_backups: 3
+log_max_age: 30
+api_url: http://127.0.0.1:8080/
+api_key: {{ crowdsec_bouncer_key }}
+insecure_skip_verify: false
+disable_ipv6: false
+deny_action: DROP
+deny_log: false
+supported_decisions_types:
+  - ban
+blacklists_ipv4: crowdsec-blacklists
+blacklists_ipv6: crowdsec6-blacklists
+ipset_type: nethash
+# DOCKER-USER: also block banned IPs on published Docker ports (#126)
+iptables_chains:
+  - INPUT
+  - DOCKER-USER
+iptables_add_rule_comments: true
+prometheus:
+  enabled: false
+  listen_addr: 127.0.0.1
+  listen_port: 60601
+# ASN bans are for Traefik only: dropping them here would also drop the replies to the
+# host's own outbound connections to those clouds (ADR 005).
+scenarios_not_containing: ["asn-blocklist"]

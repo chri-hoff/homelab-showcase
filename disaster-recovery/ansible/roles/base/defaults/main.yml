@@ -1,0 +1,54 @@
+---
+base_timezone: Europe/Berlin
+base_locale: de_DE.UTF-8
+
+# Server packages from "apt-mark showmanual" of the old host (DR inventory 2026-11-09),
+# without desktop (XFCE, lightdm, xrdp), Wazuh and installer leftovers.
+# Docker, CrowdSec, auditd, nftables, cryptsetup and postfix come with their roles.
+base_packages:
+  - acl
+  - age
+  - apt-listchanges
+  - bind9-dnsutils
+  - borgbackup2
+  - btop
+  - ca-certificates
+  - curl
+  - etckeeper
+  - ethtool
+  - fish
+  - git
+  - htop
+  - iotop
+  - jq
+  - lsof
+  # ADR 007: daily drift check (site.yml --check on the host) and Lynis audit
+  - ansible
+  - lynis
+  - mc
+  - nano
+  - net-tools
+  - progress
+  - pv
+  - python3-psutil
+  - rsync
+  - smartmontools
+  - sysstat
+  - unattended-upgrades
+  - wget
+  - yq
+
+# Disabled on the old host (host-firewall.sh, #126); masking is harmless if not installed.
+base_masked_units:
+  - avahi-daemon.service
+  - avahi-daemon.socket
+  - cups-browsed.service
+  - rpcbind.service
+  - rpcbind.socket
+  # Remote desktop, not needed (security audit 2026-10, system check 2026-11-12)
+  - xrdp.service
+  - xrdp-sesman.service
+
+# sops is not packaged for Debian. Same release as on the laptop (2026-11-09); the old
+# host's binary is from March 2026, check with "sops --version" there.
+base_sops_version: "3.12.2"

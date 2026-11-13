@@ -1,0 +1,38 @@
+# {{ ansible_managed }}
+# Relay-only: accepts mail from this host only, sends everything via smtp.
+compatibility_level = 3.9
+biff = no
+# Lynis MAIL-8818: no OS or software name in the banner (Postfix listens on loopback only anyway)
+smtpd_banner = $myhostname ESMTP
+
+myhostname = {{ ansible_facts['hostname'] }}
+myorigin = /etc/mailname
+mydestination = $myhostname, localhost.localdomain, localhost
+inet_interfaces = loopback-only
+inet_protocols = all
+mynetworks = 127.0.0.0/8 [::ffff:127.0.0.0]/104 [::1]/128
+mynetworks_style = host
+recipient_delimiter = +
+mailbox_command =
+mailbox_size_limit = 0
+alias_maps = hash:/etc/aliases
+alias_database = hash:/etc/aliases
+
+relayhost = {{ mail_relayhost }}
+smtp_tls_security_level = encrypt
+smtp_tls_CAfile = /etc/ssl/certs/ca-certificates.crt
+smtp_tls_session_cache_database = btree:${data_directory}/smtp_scache
+{% if mail_relay_ready %}
+smtp_generic_maps = hash:/etc/postfix/generic
+smtp_sasl_auth_enable = yes
+smtp_sasl_password_maps = hash:/etc/postfix/sasl_passwd
+smtp_sasl_security_options = noanonymous
+{% else %}
+# No relay (credentials not restored yet, or test VM): keep mail in the queue.
+defer_transports = smtp
+{% endif %}
+
+smtpd_relay_restrictions = permit_mynetworks permit_sasl_authenticated defer_unauth_destination
+smtpd_tls_cert_file = /etc/ssl/certs/ssl-cert-snakeoil.pem
+smtpd_tls_key_file = /etc/ssl/private/ssl-cert-snakeoil.key
+smtpd_tls_security_level = may

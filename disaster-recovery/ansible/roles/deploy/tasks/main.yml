@@ -1,0 +1,50 @@
+---
+- name: User deploy (system, password locked)
+  ansible.builtin.user:
+    name: "{{ deploy_user }}"
+    system: true
+    home: "{{ deploy_home }}"
+    create_home: true
+    shell: /bin/sh
+    password: "!"
+
+# Membership in docker would make the wrapper pointless (docker = root).
+- name: Deploy user is not in group docker
+  ansible.builtin.command: gpasswd -d {{ deploy_user }} docker
+  register: deploy_gpasswd
+  changed_when: deploy_gpasswd.rc == 0
+  failed_when: false
+
+- name: Wrapper homelab-deploy
+  ansible.builtin.copy:
+    src: "{{ homelab_repo }}/scripts/deploy/homelab-deploy"
+    dest: /usr/local/bin/homelab-deploy
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Sudoers rule (only the wrapper, SSH command passed through)
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/homelab-deploy
+    content: |
+      # #100: deploy may only run the wrapper; the SSH command is passed through.
+      Defaults!/usr/local/bin/homelab-deploy env_keep += "SSH_ORIGINAL_COMMAND SSH_CLIENT"
+      {{ deploy_user }} ALL=(root) NOPASSWD: /usr/local/bin/homelab-deploy
+    owner: root
+    group: root
+    mode: "0440"
+    validate: visudo -cf %s
+
+- name: Kestra's key with forced command
+  ansible.posix.authorized_key:
+    user: "{{ deploy_user }}"
+    key: "{{ lookup('ansible.builtin.file', deploy_pubkey_file) }}"
+    key_options: >-
+      command="sudo -n /usr/local/bin/homelab-deploy",from="{{ deploy_from }}",no-pty,no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-user-rc
+    exclusive: true
+  when: deploy_pubkey_file is file
+
+- name: Note on the missing deploy key
+  ansible.builtin.debug:
+    msg: "{{ deploy_pubkey_file }} fehlt: Kestra kann noch nicht deployen."
+  when: deploy_pubkey_file is not file

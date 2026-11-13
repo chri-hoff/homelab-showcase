@@ -1,0 +1,13 @@
+---
+- name: "Deploy with the SOPS key: {{ restore_svc }}"
+  ansible.builtin.include_tasks: restore-compose-sops.yml
+  when: restore_svc in restore_sops_services
+
+# Same path Kestra uses (#100): age key from Vault via the restored AppRole. Exit code 3
+# = nothing to deploy (no compose file / no .env.sops).
+- name: "Deploy via homelab-deploy: {{ restore_svc }}"
+  ansible.builtin.command: /usr/local/bin/homelab-deploy deploy {{ restore_svc }}
+  register: restore_deploy
+  changed_when: restore_deploy.rc == 0
+  failed_when: restore_deploy.rc not in [0, 3]
+  when: restore_svc not in restore_sops_services

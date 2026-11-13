@@ -1,0 +1,10 @@
+---
+# LUKS containers: {name, uuid, keyfile}. The keyfile is an ansible-vault encrypted file
+# in files/luks/<keyfile> on the controller and is written to /root/<keyfile> (0400).
+storage_luks: []
+
+# Mounts written to /etc/fstab and mounted: {path, src, opts, fstype (default ext4),
+# passno (fsck order, default 0)}.
+storage_mounts: []
+
+storage_luks_dir: "{{ playbook_dir }}/files/luks"

@@ -1,0 +1,5 @@
+journalctl_filter:
+  - _SYSTEMD_UNIT=ssh.service
+labels:
+  type: syslog
+source: journalctl

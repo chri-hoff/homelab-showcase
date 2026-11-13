@@ -1,0 +1,30 @@
+---
+docker_packages:
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io
+  - docker-buildx-plugin
+  - docker-compose-plugin
+  - python3-docker          # for community.docker modules
+
+docker_users:
+  - "{{ admin_user }}"
+  - svc-docker
+
+# Networks every stack joins as "external: true". The subnets are fixed because other
+# config depends on them: Traefik trustedIPs and IP allowlists, host-firewall.nft,
+# Collabora's WOPI allowlist (gateway IPs) and Kestra's fixed address 172.22.0.250.
+# Also every other network a stack declares as external.
+# NOT here: socket-proxy and supabase-hooks -- their stacks (docker-socket-proxy,
+# kestra) create them themselves; a pre-created network would make "compose up" fail.
+docker_networks:
+  - name: frontend
+    subnet: 172.21.0.0/16
+    gateway: 172.21.0.1
+  - name: backend
+    subnet: 172.22.0.0/16
+    gateway: 172.22.0.1
+  # external in services/adguard, created by nobody before (#157)
+  - name: adguardhome_network
+    subnet: 172.19.0.0/16
+    gateway: 172.19.0.1

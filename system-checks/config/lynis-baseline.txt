@@ -1,0 +1,3 @@
+# Lynis warnings that are accepted on purpose (ADR 007). One test ID per line,
+# reason as a comment after it. Anything not listed here becomes a finding.
+NETW-2705   # only one DNS server (AdGuard/router) in resolv.conf, intended; a second one would bypass AdGuard

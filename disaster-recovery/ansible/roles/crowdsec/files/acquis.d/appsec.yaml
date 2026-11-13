@@ -1,0 +1,15 @@
+# CrowdSec AppSec (WAF) component, #190. Traefik's bouncer plugin sends every request of the
+# public chains here before forwarding it; the rules come from the collections
+# crowdsecurity/appsec-virtual-patching and crowdsecurity/appsec-generic-rules.
+# Listens on all addresses like the LAPI; host-firewall.nft lets only the Docker
+# frontend/backend subnets reach port 7422.
+source: appsec
+name: appsec-traefik
+listen_addr: 0.0.0.0:7422
+# homelab/appsec-nextcloud: rule exceptions for Nextcloud's WebDAV sync
+# (files/appsec-configs/homelab-appsec-nextcloud.yaml)
+appsec_configs:
+  - crowdsecurity/appsec-default
+  - homelab/appsec-nextcloud
+labels:
+  type: appsec

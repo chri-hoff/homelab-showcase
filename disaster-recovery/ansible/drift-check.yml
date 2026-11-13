@@ -1,0 +1,22 @@
+---
+# Weekly drift check on the host itself (ADR 007): site.yml without the role "storage",
+# because storage needs the ansible-vault files (LUKS keys) and the vault password must
+# never be on the host (ADR 006). Run only in check mode:
+#
+#   cd /data/gitea/homelab/ansible
+#   ansible-playbook drift-check.yml -l thinkcentre -c local --check
+#
+# Called by scripts/maintenance/system-check.py (homelab-deploy system-check); any task
+# that would change something is a finding. Keep the role list in sync with site.yml.
+
+- name: Homelab host (drift check, without storage)
+  hosts: homelab
+  roles:
+    - base
+    - docker
+    - firewall
+    - crowdsec
+    - deploy
+    - backup
+    - mail
+    - auditd

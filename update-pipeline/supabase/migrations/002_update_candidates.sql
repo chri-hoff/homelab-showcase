@@ -46,12 +46,13 @@ revoke execute on function public.services_close_candidates() from public, anon,
 -- change). Payload: {type, table, schema, record, old_record}.
 -- "kestra" is only reachable via the supabase-hooks network (see docker-compose.yaml).
 -- ---------------------------------------------------------------------------
+-- Replaced by migration 011 (key from Supabase Vault instead of a literal, #157).
 create trigger update_candidates_status_webhook
   after update of status on public.update_candidates
   for each row
   when (old.status is distinct from new.status)
   execute function supabase_functions.http_request(
-    'http://kestra:8080/api/v1/executions/webhook/homelab/supabase-candidate-status/<KESTRA_WEBHOOK_KEY>',
+    'http://kestra:8080/api/v1/executions/webhook/homelab/supabase-candidate-status/<key-moved-to-vault>',
     'POST',
     '{"Content-Type": "application/json"}',
     '{}',

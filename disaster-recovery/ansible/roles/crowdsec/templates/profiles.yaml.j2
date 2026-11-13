@@ -1,0 +1,19 @@
+# {{ ansible_managed }}
+# Ban 4 h, each further ban of the same IP 4 h longer (duration_expr).
+{% for scope in ['Ip', 'Range'] %}
+name: default_{{ scope | lower }}_remediation
+filters:
+ - Alert.Remediation == true && Alert.GetScope() == "{{ scope }}"
+decisions:
+ - type: ban
+   duration: 4h
+duration_expr: Sprintf('%dh', (GetDecisionsCount(Alert.GetValue()) + 1) * 4)
+{% if crowdsec_telegram_enabled | default(false) %}
+notifications:
+  - telegram
+{% endif %}
+on_success: break
+{% if not loop.last %}
+---
+{% endif %}
+{% endfor %}

@@ -1,0 +1,5 @@
+// {{ ansible_managed }}
+// Overrides the package default 50unattended-upgrades (read later = wins).
+// Docker and CrowdSec come from their own repos and are updated deliberately.
+Unattended-Upgrade::Automatic-Reboot "true";
+Unattended-Upgrade::Automatic-Reboot-Time "02:00";

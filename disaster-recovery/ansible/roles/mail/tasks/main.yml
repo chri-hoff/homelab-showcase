@@ -1,0 +1,116 @@
+---
+# "No configuration": the package must not write its own main.cf, the template does.
+- name: Postfix installs without its configuration dialog
+  ansible.builtin.debconf:
+    name: postfix
+    question: postfix/main_mailer_type
+    value: No configuration
+    vtype: select
+
+- name: Postfix and mail client
+  ansible.builtin.apt:
+    name: [postfix, mailutils]
+    state: present
+
+- name: Relay credentials restored
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: ["{{ mail_secret_email }}", "{{ mail_secret_password }}"]
+  register: mail_secret_stat
+
+- name: Relay possible
+  ansible.builtin.set_fact:
+    mail_relay_ready: "{{ mail_relay_enabled and (mail_secret_stat.results | map(attribute='stat.exists') | min) }}"
+
+- name: Relay credentials
+  ansible.builtin.slurp:
+    src: "{{ item }}"
+  loop: ["{{ mail_secret_email }}", "{{ mail_secret_password }}"]
+  register: mail_secret_raw
+  no_log: true
+  when: mail_relay_ready
+
+- name: Sender address and password
+  ansible.builtin.set_fact:
+    mail_login: "{{ mail_secret_raw.results[0].content | b64decode | trim }}"
+    mail_password: "{{ mail_secret_raw.results[1].content | b64decode | trim }}"
+  no_log: true
+  when: mail_relay_ready
+
+- name: Sender address
+  ansible.builtin.set_fact:
+    mail_address: "{{ mail_sender_address | default('', true) or mail_login }}"
+  when: mail_relay_ready
+
+- name: Mail name
+  ansible.builtin.copy:
+    dest: /etc/mailname
+    content: "{{ mail_mailname }}\n"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload postfix
+
+- name: Postfix main.cf
+  ansible.builtin.template:
+    src: main.cf.j2
+    dest: /etc/postfix/main.cf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload postfix
+
+# Local senders and root's mail -> the sender address (smtp only accepts addresses of
+# the account as sender).
+- name: Sender rewriting
+  ansible.builtin.copy:
+    dest: /etc/postfix/generic
+    content: |
+      admin {{ mail_address }}
+      root {{ mail_address }}
+      admin@{{ ansible_facts['hostname'] }} {{ mail_address }}
+      root@{{ ansible_facts['hostname'] }} {{ mail_address }}
+    owner: root
+    group: root
+    mode: "0644"
+  when: mail_relay_ready
+  notify: Postmap generic
+
+- name: Relay password
+  ansible.builtin.copy:
+    dest: /etc/postfix/sasl_passwd
+    content: "{{ mail_relayhost }} {{ mail_login }}:{{ mail_password }}\n"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  when: mail_relay_ready
+  notify: Postmap sasl_passwd
+
+- name: Root's mail goes to the smtp address
+  ansible.builtin.lineinfile:
+    path: /etc/aliases
+    regexp: '^root:'
+    line: "root: {{ mail_address }}"
+  when: mail_relay_ready
+  notify: Newaliases
+
+- name: Maps built before Postfix starts
+  ansible.builtin.meta: flush_handlers
+
+- name: Postfix running
+  ansible.builtin.systemd_service:
+    name: postfix
+    enabled: true
+    state: started
+
+# Mail queued while the credentials were missing goes out now.
+- name: Flush deferred mail
+  ansible.builtin.command: postqueue -f
+  changed_when: false
+  when: mail_relay_ready
+
+- name: Note on the missing relay credentials
+  ansible.builtin.debug:
+    msg: "smtp-Zugangsdaten fehlen (noch nicht restauriert): Mails werden nur gesammelt und nach dem Restore beim nächsten site.yml-Lauf verschickt."
+  when: mail_relay_enabled and not mail_relay_ready

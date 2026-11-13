@@ -1,0 +1,76 @@
+---
+# Vault's own data disk is gone: fresh Vault, throwaway init, restore the snapshot
+# (docs/runbooks/vault-restore.md). Afterwards Vault uses the production keyring and is
+# sealed -> unsealed with the production keys like in the normal path.
+- name: Vault is still empty
+  ansible.builtin.assert:
+    that: not (restore_vault_status.stdout | from_json).initialized
+    fail_msg: "Vault ist schon initialisiert -- Snapshot-Restore nur in ein leeres Vault."
+    quiet: true
+
+- name: Throwaway init
+  ansible.builtin.command: >-
+    docker exec vault vault operator init -address=http://127.0.0.1:8200
+    -key-shares=1 -key-threshold=1 -format=json
+  register: restore_vault_init
+  changed_when: true
+  no_log: true
+
+- name: Unseal with the throwaway key
+  ansible.builtin.command:
+    argv: [docker, exec, vault, vault, operator, unseal, -address=http://127.0.0.1:8200,
+           "{{ (restore_vault_init.stdout | from_json).unseal_keys_b64[0] }}"]
+  changed_when: true
+  no_log: true
+
+- name: Snapshot into the container
+  ansible.builtin.command: docker cp {{ restore_vault_snapshot | quote }} vault:/tmp/vault.snap
+  changed_when: true
+
+# docker cp keeps the host's root:600; the vault CLI in the container is not root
+# ("Error opening policy file: ... permission denied", DR test 2026-11-09).
+- name: Snapshot readable for the vault CLI
+  ansible.builtin.command: docker exec -u root vault chmod 644 /tmp/vault.snap
+  changed_when: true
+
+# The token is in argv -> no_log; the error (stderr) is shown by the next task.
+- name: Restore the snapshot
+  ansible.builtin.command:
+    argv: [docker, exec, -e, "VAULT_TOKEN={{ (restore_vault_init.stdout | from_json).root_token }}",
+           vault, vault, operator, raft, snapshot, restore, -force, -address=http://127.0.0.1:8200,
+           /tmp/vault.snap]
+  register: restore_vault_restore
+  changed_when: true
+  failed_when: false
+  no_log: true
+
+- name: Snapshot restored
+  ansible.builtin.assert:
+    that: restore_vault_restore.rc == 0
+    fail_msg: "Snapshot-Restore fehlgeschlagen: {{ restore_vault_restore.stderr | default('') }}"
+    quiet: true
+
+- name: Remove the snapshot from the container
+  ansible.builtin.command: docker exec -u root vault rm -f /tmp/vault.snap
+  changed_when: true
+
+# Now it runs with the production keyring. Restart, so it comes up sealed like after any
+# start -- and is unsealed with the real unseal keys (which proves they work).
+- name: Restart Vault with the restored data
+  ansible.builtin.command: docker restart vault
+  changed_when: true
+
+- name: Vault API answers after the restart
+  ansible.builtin.command: docker exec vault vault status -address=http://127.0.0.1:8200 -format=json
+  register: restore_vault_restarted
+  changed_when: false
+  failed_when: restore_vault_restarted.rc not in [0, 2]
+  retries: 30
+  delay: 2
+  until: restore_vault_restarted.rc in [0, 2]
+
+- name: Vault status after the restore
+  ansible.builtin.command: docker exec vault vault status -address=http://127.0.0.1:8200 -format=json
+  register: restore_vault_status
+  changed_when: false
+  failed_when: restore_vault_status.rc not in [0, 2]

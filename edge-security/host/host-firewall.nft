@@ -42,8 +42,8 @@ table inet host-firewall {
 
 		# Container -> host: only what is needed (#126). Before: every container (also the
 		# public ones) could reach every host port, including SSH and RDP.
-		# Traefik's CrowdSec plugin -> LAPI (frontend/backend subnets)
-		ip saddr { 172.21.0.0/16, 172.22.0.0/16 } tcp dport 8080 accept
+		# Traefik's CrowdSec plugin -> LAPI (8080) and AppSec/WAF (7422, #190)
+		ip saddr { 172.21.0.0/16, 172.22.0.0/16 } tcp dport { 8080, 7422 } accept
 		# Kestra (fixed IP in backend) -> homelab-deploy (SSH forced command, #100)
 		ip saddr 172.22.0.250 tcp dport 22 accept
 		# Containers calling a public hostname (resolves to the host): Docker skips the

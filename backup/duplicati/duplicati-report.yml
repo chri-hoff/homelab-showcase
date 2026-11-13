@@ -1,0 +1,52 @@
+# Kestra flow: Duplicati result reports (send-http) -> Telegram + state for the system check.
+#
+# Duplicati keeps its results in its own database, not in the container log. On 2026-11-13 the
+# OneDrive uploads failed (Microsoft outage, HTTP 401) and only a mail and the web UI showed it.
+# Now Duplicati posts every result here (backend network, no Traefik):
+#
+#   http://kestra:8080/api/v1/executions/webhook/homelab/duplicati-report/<key>
+#
+#   - not Success (Warning/Error/Fatal) -> Telegram right away
+#   - every report -> /state/duplicati/<job>.json (host: /data/kestra-state/duplicati/),
+#     read by the weekly system check (ADR 007): no successful backup for 26 h, or failures in
+#     the last 8 days, become an issue. A job that stops reporting at all is caught there too.
+#
+# Setup: see services/duplicati/README.md, section "Ergebnisberichte an Kestra".
+# The key is in Vault (homelab/services/kestra-webhooks, field duplicati_report) AND in
+# Duplicati's settings, so rotate-webhook-keys.sh leaves it alone (like update_on_merge).
+
+id: duplicati-report
+namespace: homelab
+
+triggers:
+  - id: duplicati
+    type: io.kestra.plugin.core.trigger.Webhook
+    key: "{{ secret('DUPLICATI_REPORT_WEBHOOK_KEY') }}"
+
+tasks:
+  - id: report
+    type: io.kestra.plugin.scripts.shell.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    env:
+      BODY: "{{ trigger.body | toJson }}"
+      BOT_TOKEN: "{{ secret('TELEGRAM_BOT_TOKEN') }}"
+      CHAT_ID: "{{ secret('TELEGRAM_CHAT_ID') }}"
+    commands:
+      - |
+        set -e
+        python3 /repo/scripts/kestra/duplicati-report.py
+        if [ -s message.txt ]; then
+          python3 /repo/scripts/kestra/telegram-send.py < message.txt
+        fi
+
+errors:
+  - id: telegram-on-failure
+    type: io.kestra.plugin.scripts.shell.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    env:
+      BOT_TOKEN: "{{ secret('TELEGRAM_BOT_TOKEN') }}"
+      CHAT_ID: "{{ secret('TELEGRAM_CHAT_ID') }}"
+    commands:
+      - python3 /repo/scripts/kestra/telegram-send.py "❌ Duplicati-Bericht konnte nicht verarbeitet werden ({{ execution.id }}) -- siehe Kestra"

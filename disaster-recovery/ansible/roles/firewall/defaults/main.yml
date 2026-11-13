@@ -1,0 +1,8 @@
+---
+# Ruleset: scripts/security/host-firewall.nft (the same file host-firewall.sh installs).
+firewall_rules_src: "{{ homelab_repo }}/scripts/security/host-firewall.nft"
+firewall_dir: /etc/homelab-firewall
+
+# Extra networks allowed to SSH, added to the set admin_v4 after the ruleset is loaded.
+# Only for the DR test VM (see host_vars/drtest.yml); empty on the real host.
+firewall_extra_admin_v4: []

@@ -22,6 +22,8 @@
 #   crowdsec-asn-sync  scripts/security/crowdsec-asn-blocklist.sh (ASN bans in the
 #                      Traefik plugin from config/crowdsec/asn-blocklist.txt, #127)
 #   crowdsec-alerts    CrowdSec alerts of the last 48 h as compact JSON (read only, #127)
+#   system-check       scripts/maintenance/system-check.py: daily read-only checks, findings
+#                      as JSON (ADR 007)
 #
 # Results that Kestra needs as data are printed additionally as a Kestra outputs line
 # (::{"outputs":{...}}::), which the SSH Command task turns into outputs.vars.
@@ -222,8 +224,12 @@ case "$ACTION" in
       && python3 "$REPO/scripts/security/crowdsec-alerts-export.py" "$WORK/alerts.json" < "$WORK/raw.json"
     RC=$?
     [ $RC -eq 0 ] && kestra_output alerts "$WORK/alerts.json" ;;
+  system-check)
+    no_arg
+    run_report python3 "$REPO/scripts/maintenance/system-check.py" "$WORK/findings.json"; RC=$?
+    [ $RC -eq 0 ] && kestra_output findings "$WORK/findings.json" ;;
   *)
-    die "unbekannte Aktion '${ACTION}' (erlaubt: deploy <service>, auto-update, ps, update-check, backup-mariadb, backup-vault, backup-postgres, trivy-scan, crowdsec-asn-sync, crowdsec-alerts)" ;;
+    die "unbekannte Aktion '${ACTION}' (erlaubt: deploy <service>, auto-update, ps, update-check, backup-mariadb, backup-vault, backup-postgres, trivy-scan, crowdsec-asn-sync, crowdsec-alerts, system-check)" ;;
 esac
 
 log "result=rc$RC"

@@ -134,9 +134,10 @@ sequenceDiagram
 - **Least privilege:** Kestra talks to PostgREST as the database role `kestra_sync`. That role
   can insert candidates and update statuses, but cannot change a candidate's version or image.
 - **Secrets:** Telegram, Supabase, n8n, Mindwtr and Gitea credentials, the deploy SSH key and
-  the Gitea webhook key come from Vault via Kestra's `secret()` mechanism (see the entrypoint in
-  `kestra/docker-compose.yaml`). Other webhook keys in this repository are placeholders
-  (`<KESTRA_WEBHOOK_KEY>`).
+  all webhook keys (Gitea push, Telegram commands, the Supabase database webhook) come from
+  Vault via Kestra's `secret()` mechanism (see the entrypoint in `kestra/docker-compose.yaml`).
+  The flows only reference `{{ secret('...') }}`; no key is in the repository any more. The
+  Supabase trigger reads its key from Supabase Vault (`vault.decrypted_secrets`) at call time.
 - **Self-healing backlog:** every run also picks up candidates that failed earlier, for example
   because n8n was down, instead of relying on one-shot events.
 

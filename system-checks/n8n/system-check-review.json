@@ -1,0 +1,215 @@
+{
+  "name": "system-check-review",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "system-check-review",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "system-check-review"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.headers['x-webhook-secret']}}",
+              "rightValue": "={{$env.N8N_WEBHOOK_SECRET}}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Webhook-Secret pruefen",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Builds the Claude request from the redacted findings (system-check-issues.py, ADR 007).\nconst body = $input.item.json.body ?? $input.item.json;\nconst findings = Array.isArray(body.findings) ? body.findings : [];\nconst request = {\n  model: 'claude-haiku-5-5',\n  max_tokens: 8000,\n  output_config: { effort: 'low', format: { type: 'json_schema', schema: {\"type\": \"object\", \"additionalProperties\": false, \"required\": [\"assessment\", \"findings\", \"telegram_summary\"], \"properties\": {\"assessment\": {\"type\": \"string\"}, \"telegram_summary\": {\"type\": \"string\"}, \"findings\": {\"type\": \"array\", \"items\": {\"type\": \"object\", \"additionalProperties\": false, \"required\": [\"fingerprint\", \"issue_body\"], \"properties\": {\"fingerprint\": {\"type\": \"string\"}, \"issue_body\": {\"type\": \"string\"}}}}}} } },\n  system: \"Du bist der Pr\\u00fcfer f\\u00fcr den w\\u00f6chentlichen Systemcheck eines privaten Homelabs (ein Debian-Host mit rund 36 Docker-Diensten, Secrets in HashiCorp Vault, Traefik, Kestra, Gitea).\\nDu bekommst eine Liste von Befunden. Ein Skript hat sie nach festen Regeln ermittelt; die Daten sind bereinigt (Platzhalter wie <host>, <internal-ip>, <user>, <redacted>).\\n\\nRegeln:\\n- Bearbeite genau die gelieferten Befunde. Erfinde keine neuen, lass keinen weg, \\u00e4ndere keinen Schweregrad und keinen Fingerprint.\\n- Schreibe Deutsch, sachlich und knapp. Keine Floskeln.\\n- Wiederhole keine Werte, die wie Passw\\u00f6rter, Tokens oder Schl\\u00fcssel aussehen, und versuche nicht, Platzhalter aufzul\\u00f6sen.\\n- issue_body: Markdown mit genau drei kurzen Abschnitten: \\\"**Was ist los**\\\" (1-2 S\\u00e4tze), \\\"**M\\u00f6gliche Ursache**\\\" (1-3 Stichpunkte, als Vermutung gekennzeichnet), \\\"**N\\u00e4chste Schritte**\\\" (1-4 nummerierte, konkrete Schritte, gern mit Befehl in Backticks). Keine \\u00dcberschrift mit #.\\n- assessment: 1-3 S\\u00e4tze Gesamtbild (was ist dringend, was kann warten).\\n- telegram_summary: 2-4 Zeilen reiner Text ohne Markdown, das Wichtigste zuerst.\",\n  messages: [{\n    role: 'user',\n    content: 'Systemcheck vom ' + (body.date || '?') + '. Befunde (JSON):\\n' + JSON.stringify(findings, null, 1),\n  }],\n};\nreturn [{ json: { request, fingerprints: findings.map(f => f.fingerprint) } }];\n"
+      },
+      "name": "Anfrage bauen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2026-10-21"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "name": "Claude Auswertung",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        -100
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Anthropic API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validates Claude's answer; ok:false -> Kestra uses its template (nothing is lost).\nconst res = $input.item.json;\nconst expected = $('Anfrage bauen').item.json.fingerprints;\nconst fail = (reason) => [{ json: { ok: false, reason } }];\nif (res.stop_reason !== 'end_turn') return fail('stop_reason ' + res.stop_reason);\n// Haiku 5.5 thinks by default: the content starts with a thinking block, the JSON is in the text block\nconst text = (res.content || []).find(b => b.type === 'text');\nif (!text) return fail('kein Text in der Antwort');\nlet out;\ntry { out = JSON.parse(text.text); } catch (e) { return fail('kein gültiges JSON'); }\n// Only texts for fingerprints that were sent; Claude must not add findings\nconst findings = (out.findings || []).filter(f => expected.includes(f.fingerprint));\nreturn [{ json: { ok: true, assessment: out.assessment || '', telegram_summary: out.telegram_summary || '',\n                  findings, model: res.model, usage: res.usage } }];\n"
+      },
+      "name": "Antwort pruefen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "name": "Antworten",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"error\": \"forbidden\" } }}",
+        "options": {
+          "responseCode": 403
+        }
+      },
+      "name": "Abweisen (403)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        440,
+        120
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Webhook-Secret pruefen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook-Secret pruefen": {
+      "main": [
+        [
+          {
+            "node": "Anfrage bauen",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Abweisen (403)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anfrage bauen": {
+      "main": [
+        [
+          {
+            "node": "Claude Auswertung",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Auswertung": {
+      "main": [
+        [
+          {
+            "node": "Antwort pruefen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Antwort pruefen": {
+      "main": [
+        [
+          {
+            "node": "Antworten",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}

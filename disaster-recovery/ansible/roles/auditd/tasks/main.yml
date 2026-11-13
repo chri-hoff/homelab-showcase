@@ -1,0 +1,45 @@
+---
+# Same as scripts/security/apply-auditd.sh (#123): watches on security-relevant files,
+# records go via the syslog plugin into the journal -> Alloy -> Loki -> Grafana alert.
+
+- name: Auditd installed
+  ansible.builtin.apt:
+    name: [auditd, audispd-plugins]
+    state: present
+
+# auditctl refuses watches on paths that do not exist. Some only appear with later
+# roles (deploy: /usr/local/bin/homelab-deploy, /var/lib/deploy/.ssh), so a second
+# run of site.yml adds them.
+- name: Watched paths in the rules file
+  ansible.builtin.set_fact:
+    auditd_rules: "{{ lookup('ansible.builtin.file', homelab_repo ~ '/scripts/security/homelab-audit.rules').splitlines() }}"
+
+- name: Watched paths present
+  ansible.builtin.stat:
+    path: "{{ item | regex_replace('^-w (\\S+).*$', '\\1') }}"
+  loop: "{{ auditd_rules | select('match', '^-w ') | list }}"
+  register: auditd_paths
+
+- name: Rules (without missing paths)
+  ansible.builtin.template:
+    src: homelab.rules.j2
+    dest: /etc/audit/rules.d/homelab.rules
+    owner: root
+    group: root
+    mode: "0640"
+  vars:
+    auditd_missing: "{{ auditd_paths.results | rejectattr('stat.exists') | map(attribute='item') | list }}"
+  notify: Load audit rules
+
+- name: Syslog plugin active (auditd -> journal)
+  ansible.builtin.lineinfile:
+    path: /etc/audit/plugins.d/syslog.conf
+    regexp: '^active\s*='
+    line: active = yes
+  notify: Restart auditd
+
+- name: Auditd enabled
+  ansible.builtin.systemd_service:
+    name: auditd
+    enabled: true
+    state: started

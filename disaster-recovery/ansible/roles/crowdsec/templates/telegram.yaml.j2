@@ -1,0 +1,26 @@
+# {{ ansible_managed }}
+# Same message as scripts/security/crowdsec-telegram.sh. Token and chat ID come from the
+# seal-alert file (/opt/docker/secrets/vault-unseal-alert.env).
+type: http
+name: telegram
+log_level: info
+
+format: |
+  {
+    "chat_id": "{{ crowdsec_tg_chat }}",
+    "disable_web_page_preview": true,
+    "text": "{% raw %}
+  {{- range . -}}
+  {{- $alert := . -}}
+  {{- range .Decisions -}}
+  🚫 CrowdSec-Sperre (homelab)\nIP: {{ .Value | toJson | trimPrefix "\"" | trimSuffix "\"" }}\nAktion: {{ .Type | toJson | trimPrefix "\"" | trimSuffix "\"" }} für {{ .Duration | toJson | trimPrefix "\"" | trimSuffix "\"" }}\nSzenario: {{ .Scenario | toJson | trimPrefix "\"" | trimSuffix "\"" }}\nHerkunft: {{ $alert.Source.Cn | toJson | trimPrefix "\"" | trimSuffix "\"" }} / {{ $alert.Source.AsName | toJson | trimPrefix "\"" | trimSuffix "\"" }}\n\n
+  {{- end -}}
+  {{- end -}}
+{% endraw %}
+    "
+  }
+
+url: https://api.telegram.org/bot{{ crowdsec_tg_token }}/sendMessage
+method: POST
+headers:
+  Content-Type: application/json

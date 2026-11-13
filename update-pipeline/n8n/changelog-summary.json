@@ -160,7 +160,7 @@
           "parameters": [
             {
               "name": "anthropic-version",
-              "value": "2023-06-01"
+              "value": "2026-10-21"
             },
             {
               "name": "content-type",
@@ -170,8 +170,10 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"claude-haiku-4-5-20251001\",\n  \"max_tokens\": 500,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": {{JSON.stringify('Fasse auf Deutsch kurz zusammen, was sich fuer ' + $json.image + ' (neue Version: ' + $json.tag + ') laut folgenden Release-Notes geaendert hat. Gib am Ende eine klare Handlungsempfehlung (Update jetzt sinnvoll: ja/nein/abwarten) und weise auf Breaking Changes hin, falls vorhanden.\\n\\nRelease-Notes:\\n' + $json.releaseNotes) }}\n    }\n  ]\n}",
-        "options": {}
+        "jsonBody": "={\n  \"model\": \"claude-haiku-5-5\",\n  \"max_tokens\": 4000,\n  \"output_config\": { \"effort\": \"low\" },\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": {{JSON.stringify('Fasse auf Deutsch kurz zusammen, was sich fuer ' + $json.image + ' (neue Version: ' + $json.tag + ') laut folgenden Release-Notes geaendert hat. Gib am Ende eine klare Handlungsempfehlung (Update jetzt sinnvoll: ja/nein/abwarten) und weise auf Breaking Changes hin, falls vorhanden.\\n\\nRelease-Notes:\\n' + $json.releaseNotes) }}\n    }\n  ]\n}",
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
       },
       "credentials": {
         "httpHeaderAuth": {
@@ -182,7 +184,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const ctx = $('Release-Notes formatieren').item.json;\nconst claude = $input.item.json;\nconst summary = claude.content && claude.content[0] ? claude.content[0].text : null;\nreturn [{ json: { mapped: true, repo: ctx.githubOwner + '/' + ctx.githubRepo, tag: ctx.tag, summary } }];"
+        "jsCode": "const ctx = $('Release-Notes formatieren').item.json;\nconst claude = $input.item.json;\n// Haiku 5.5 thinks by default: the first block is a thinking block, the summary is the text block\nconst textBlock = (claude.content || []).find(b => b.type === 'text');\nconst summary = textBlock ? textBlock.text : null;\nreturn [{ json: { mapped: true, repo: ctx.githubOwner + '/' + ctx.githubRepo, tag: ctx.tag, summary } }];"
       },
       "id": "14d6f893-f63b-4047-ae09-f1d010205477",
       "name": "Antwort (mit KI)",

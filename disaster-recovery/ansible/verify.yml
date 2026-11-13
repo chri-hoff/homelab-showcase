@@ -1,0 +1,144 @@
+---
+# Checks after site.yml (#157): does the rebuilt host look like the old one?
+# Read-only, safe on the real host too:  ansible-playbook verify.yml -l thinkcentre -K
+
+- name: Verify homelab host
+  hosts: homelab
+  # Only set for the DR test VM (egress via the laptop's allowlist proxy)
+  environment: "{{ proxy_env | default({}) }}"
+  vars_files:
+    - roles/docker/defaults/main.yml
+  tasks:
+    - name: Services running
+      ansible.builtin.command: systemctl is-active {{ item }}  # noqa: command-instead-of-module
+      loop: [docker, host-firewall, auditd, ssh, unattended-upgrades, crowdsec, crowdsec-firewall-bouncer, cron, postfix]
+      changed_when: false
+
+    - name: Masked units
+      ansible.builtin.command: systemctl is-enabled {{ item }}  # noqa: command-instead-of-module
+      loop: [nftables.service, rpcbind.service, avahi-daemon.service]
+      register: verify_masked
+      changed_when: false
+      failed_when: verify_masked.stdout != 'masked'
+
+    - name: Docker networks
+      community.docker.docker_network_info:
+        name: "{{ item.name }}"
+      loop: "{{ docker_networks }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: verify_networks
+
+    - name: Docker networks have the fixed subnets
+      ansible.builtin.assert:
+        that:
+          - item.exists
+          - item.network.IPAM.Config[0].Subnet == item.item.subnet
+        fail_msg: "Netz {{ item.item.name }} fehlt oder hat ein anderes Subnetz"
+        quiet: true
+      loop: "{{ verify_networks.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: Docker daemon settings
+      ansible.builtin.command: docker info --format '{{ "{{" }}.LiveRestoreEnabled{{ "}}" }} {{ "{{" }}.LoggingDriver{{ "}}" }}'
+      register: verify_docker
+      changed_when: false
+      failed_when: verify_docker.stdout != 'true json-file'
+
+    - name: Host firewall table loaded
+      ansible.builtin.command: nft list set inet host-firewall admin_v4
+      register: verify_nft
+      changed_when: false
+
+    - name: Firewall allows the admin networks
+      ansible.builtin.assert:
+        that: "'203.0.113.0/24' in verify_nft.stdout"
+        quiet: true
+
+    - name: Audit watches active
+      ansible.builtin.command: auditctl -l
+      register: verify_audit
+      changed_when: false
+      failed_when: "'homelab-critical' not in verify_audit.stdout"
+
+    - name: SSH configuration
+      ansible.builtin.command: sshd -T
+      register: verify_sshd
+      changed_when: false
+      failed_when: >-
+        'passwordauthentication no' not in verify_sshd.stdout or
+        'permitrootlogin no' not in verify_sshd.stdout
+
+    - name: Service user svc-docker has the old IDs
+      ansible.builtin.command: id -u svc-docker
+      register: verify_uid
+      changed_when: false
+      failed_when: verify_uid.stdout | int != svc_docker_uid
+
+    - name: CrowdSec LAPI listens for the Traefik bouncer
+      ansible.builtin.command: ss -Htln sport = :8080
+      register: verify_lapi
+      changed_when: false
+      failed_when: "'0.0.0.0:8080' not in verify_lapi.stdout and '*:8080' not in verify_lapi.stdout"
+
+    - name: CrowdSec AppSec listens for the Traefik bouncer (#190)
+      ansible.builtin.command: ss -Htln sport = :7422
+      register: verify_appsec
+      changed_when: false
+      failed_when: "'0.0.0.0:7422' not in verify_appsec.stdout and '*:7422' not in verify_appsec.stdout"
+
+    - name: Local AppSec config loaded (Nextcloud WebDAV exceptions)
+      ansible.builtin.command: cscli appsec-configs inspect homelab/appsec-nextcloud
+      changed_when: false
+
+    - name: Firewall bouncer covers Docker ports, ignores ASN bans
+      ansible.builtin.command: >-
+        grep -c -e '- DOCKER-USER' -e 'scenarios_not_containing. \["asn-blocklist"\]'
+        /etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml
+      register: verify_bouncer
+      changed_when: false
+      failed_when: verify_bouncer.stdout != '2'
+
+    - name: Local CrowdSec scenario loaded
+      ansible.builtin.command: cscli scenarios inspect homelab/http-401-bf
+      changed_when: false
+
+    - name: Vaultwarden scenario has the stricter local values
+      ansible.builtin.command: >-
+        grep -c -e '^capacity: 2$' -e '^blackhole: 60m$' /etc/crowdsec/scenarios/vaultwarden-bf.yaml
+      register: verify_vw
+      changed_when: false
+      failed_when: verify_vw.stdout != '4'
+
+    - name: Deploy user may only run the wrapper and is not in group docker
+      ansible.builtin.command: id -nG deploy
+      register: verify_deploy
+      changed_when: false
+      failed_when: "'docker' in verify_deploy.stdout.split()"
+
+    - name: Sudoers rule for the wrapper
+      ansible.builtin.command: visudo -cf /etc/sudoers.d/homelab-deploy
+      changed_when: false
+
+    - name: Backup cron jobs present
+      ansible.builtin.command: crontab -l -u root
+      register: verify_cron
+      changed_when: false
+      failed_when: >-
+        'backup_docker_loki.sh' not in verify_cron.stdout or
+        'backup_nextcloud_borg.sh' not in verify_cron.stdout or
+        'check_vault_sealed.sh' not in verify_cron.stdout
+
+    - name: Postfix relays via smtp and only listens locally
+      ansible.builtin.command: postconf -h relayhost inet_interfaces
+      register: verify_postfix
+      changed_when: false
+      failed_when: verify_postfix.stdout_lines != ['[smtp.de]:587', 'loopback-only']
+
+    - name: Test VM never relays mail (isolation)
+      ansible.builtin.command: postconf -h defer_transports
+      register: verify_defer
+      changed_when: false
+      failed_when: verify_defer.stdout != 'smtp'
+      when: not (mail_relay_enabled | default(true))

@@ -1,0 +1,39 @@
+---
+# Host clone of the repo (on /data, survives a system-disk failure). Cron jobs run the
+# scripts from there, as on the old host.
+backup_repo: /data/gitea/homelab
+
+# false = cron entries are written but commented out (DR test VM: no data, no Vault,
+# and nothing should send Telegram messages from there).
+backup_cron_enabled: true
+
+# Root crontab of the old host (DR inventory 2026-11-09)
+backup_cron_jobs:
+  - name: Nextcloud cron.php
+    minute: "*/5"
+    job: docker exec -u www-data nextcloud php -f /var/www/html/cron.php > /dev/null 2>&1
+  - name: Nextcloud GeoBlocker DB update
+    minute: "0"
+    hour: "0"
+    weekday: "1"
+    job: docker exec -u www-data nextcloud php occ geoblocker:localization-service:update-db
+  - name: Nextcloud app updates
+    minute: "0"
+    hour: "1"
+    job: docker exec -u www-data nextcloud php occ app:update --all
+  - name: Borg backup Nextcloud (maintenance mode only while running)
+    minute: "0"
+    hour: "1"
+    job: "{{ backup_repo }}/scripts/backup/backup_nextcloud_borg.sh"
+  - name: Borg backup /opt/docker
+    minute: "15"
+    hour: "2"
+    job: "{{ backup_repo }}/scripts/backup/backup_docker_loki.sh"
+  - name: Vault seal check
+    minute: "*/5"
+    job: "{{ backup_repo }}/scripts/vault/check_vault_sealed.sh >> /var/log/check_vault_sealed.log 2>&1"
+
+# smartd: disks to watch before DEVICESCAN (smartd ignores everything after it).
+# Empty list and no DEVICESCAN = smartd not configured (VM).
+backup_smartd_devices: []
+backup_smartd_devicescan: true

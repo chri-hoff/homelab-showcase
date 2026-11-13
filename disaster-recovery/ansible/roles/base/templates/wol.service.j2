@@ -1,0 +1,11 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Enable Wake-on-LAN
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/ethtool -s {{ wol_interface }} wol g
+
+[Install]
+WantedBy=multi-user.target

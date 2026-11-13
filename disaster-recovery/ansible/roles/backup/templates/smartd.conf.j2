@@ -1,0 +1,9 @@
+# {{ ansible_managed }}
+# Explicit disks first: smartd ignores every line after DEVICESCAN (#151).
+# -M exec smartd-runner -> /etc/smartmontools/run.d/20telegram
+{% for d in backup_smartd_devices %}
+{{ d }} -a -n standby,q -s (S/../.././05|L/../../6/05) -m root -M exec /usr/share/smartmontools/smartd-runner
+{% endfor %}
+{% if backup_smartd_devicescan %}
+DEVICESCAN -d removable -n standby -m root -M exec /usr/share/smartmontools/smartd-runner
+{% endif %}

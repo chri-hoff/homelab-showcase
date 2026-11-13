@@ -1,0 +1,11 @@
+---
+# Restricted deploy path for Kestra (#100, scripts/deploy/install-homelab-deploy.sh):
+# user "deploy" (not in group docker) may only run /usr/local/bin/homelab-deploy via
+# sudo, through an SSH key with a forced command, only from Kestra's fixed address.
+deploy_user: deploy
+deploy_home: /var/lib/deploy
+deploy_from: 172.22.0.250          # Kestra in network backend (services/kestra)
+
+# Public key of Kestra's deploy key (the private key is in Vault). Copy it from the host:
+#   ssh tc sudo cat /var/lib/deploy/.ssh/authorized_keys | grep -o 'ssh-ed25519 .*' > files/ssh/deploy.pub
+deploy_pubkey_file: "{{ playbook_dir }}/files/ssh/deploy.pub"

@@ -1,0 +1,4 @@
+# Containers with the label crowdsec.enable=true (type from crowdsec.labels.type).
+# SSH is read via acquis.d/setup.sshd.yaml (journalctl).
+source: docker
+use_container_labels: true

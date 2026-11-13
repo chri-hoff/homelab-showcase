@@ -1,0 +1,4 @@
+filenames:
+  - /mnt/nextcloud/nextcloud/nextcloud.log
+labels:
+  type: nextcloud

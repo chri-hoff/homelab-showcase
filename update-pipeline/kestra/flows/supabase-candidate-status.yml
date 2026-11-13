@@ -11,7 +11,8 @@
 # Reachability: supabase-db and kestra only share the supabase-hooks network.
 # Payload (supabase_functions.http_request): {type, table, schema, record, old_record}.
 #
-# The webhook key also appears in the migration -- change both together.
+# The webhook key lives in HashiCorp Vault (kestra-webhooks/candidate_status); the DB
+# trigger reads its copy from Supabase Vault (migration 011, services/kestra/rotate-webhook-keys.sh).
 
 id: supabase-candidate-status
 namespace: homelab
@@ -19,7 +20,8 @@ namespace: homelab
 triggers:
   - id: supabase-db
     type: io.kestra.plugin.core.trigger.Webhook
-    key: "<KESTRA_WEBHOOK_KEY>"
+    # From Vault (homelab/services/kestra-webhooks, field candidate_status)
+    key: "{{ secret('CANDIDATE_STATUS_WEBHOOK_KEY') }}"
 
 tasks:
   - id: log-status-change

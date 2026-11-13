@@ -1,0 +1,19 @@
+---
+# Second notification channel next to Telegram: local mail (smartd -m root, cron output,
+# unattended-upgrades) is relayed via smtp. Same setup as on the old host.
+mail_relayhost: "[smtp.de]:587"
+mail_mailname: smtp.de
+
+# Relay credentials and sender address come from the files restored with /opt/docker
+# (the same ones Authentik uses), so neither password nor address is in the repo.
+mail_secret_email: /opt/docker/secrets/smtp_email.txt
+mail_secret_password: /opt/docker/secrets/smtp_password.txt
+
+# false = mail is accepted and queued but never relayed (defer_transports = smtp).
+# Also the state until the credentials are restored: queued mail goes out on the
+# next run of site.yml after the restore instead of bouncing.
+mail_relay_enabled: true
+
+# Sender and recipient of the host's mail: an alias of the smtp account, not the login
+# address in smtp_email.txt. Empty = use the login address.
+mail_sender_address: ""

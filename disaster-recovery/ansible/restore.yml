@@ -1,0 +1,331 @@
+---
+# Restore the homelab's data and services on a host built by site.yml (#157).
+# Scenario: the system disk (NVMe: /, /opt, /var) is lost, the data disks survive:
+#   /data (SSD)  -> Borg repo of /opt/docker, the repo checkout, Loki, kestra-state
+#   /home (SSD)  -> SOPS age key (~/.config/sops/age/keys.txt) of the repo user
+#   wd-750       -> Vault's Raft data (or: restore from a snapshot, restore_vault_snapshot)
+#
+#   ansible-playbook site.yml    -l thinkcentre -K      # host layer, mounts the disks
+#   ansible-playbook restore.yml -l thinkcentre -K --ask-vault-pass   # this playbook (runs site.yml again)
+#
+# Prompts:
+#   BECOME password  -> sudo password of the admin user on the host
+#   Vault password   -> the ANSIBLE-VAULT password (Vaultwarden entry "Ansible-Vault"); it
+#                       opens files/luks/*.vault and restore-secrets.yml. Not the Borg
+#                       passphrase -- that one is stored INSIDE restore-secrets.yml.
+#   (pause)          -> enter the HashiCorp Vault unseal keys in a second terminal
+# Manual on purpose: entering the Vault unseal keys (the playbook pauses).
+# Refuses to run if /opt/docker is not empty -- it never overwrites a running host.
+
+- name: Restore data and services
+  hosts: homelab
+  environment: "{{ proxy_env | default({}) }}"
+  vars:
+    restore_source_host: ThinkCentre
+    restore_borg_repo: "/data/backup/{{ restore_source_host }}/docker"
+    restore_target: /opt/docker
+    # The backup archives data/backup/work/<host>/docker/...
+    restore_strip_components: 5
+    restore_repo: /data/gitea/homelab
+    restore_sops_key: "/home/{{ admin_user }}/.config/sops/age/keys.txt"
+    # Plain (decrypted) Raft snapshot on the host: only if Vault's own data disk is gone.
+    restore_vault_snapshot: ""
+    restore_vault_data: /mnt/wd-750/docker/data/vault/data
+    # Built locally, in no registry (services/vault-agent)
+    restore_vault_agent_image: homelab-vault-agent:1.0
+    # Deployed with the SOPS key from /home: Vault (homelab-deploy needs Vault itself)
+    # and the services homelab-deploy refuses on purpose (#100).
+    restore_sops_services: [vault, traefik, authentik, kestra]
+    # Order matters: socket proxy before Traefik, databases before their users, Kestra
+    # before Supabase (Kestra's stack creates the network supabase-hooks).
+    restore_order:
+      - [vault]
+      - [docker-socket-proxy]
+      - [postgres, mariadb, redis]
+      - [traefik, authentik]
+      - [gitea, adguard, vaultwarden]
+      - [kestra]
+      - [supabase]
+      - [loki, prometheus, alloy, nodeexp, cadvisor, grafana, uptime-kuma]
+      - [nextcloud, collabora, emqx, influxdb, n8n, mindwtr, filebrowser, homepage, adminer, duplicati]
+    # DR test VM: Nextcloud's data disk is not there -- an empty data dir with the marker
+    # file lets the container start (and nothing more).
+    restore_nextcloud_placeholder: false
+    # start = everything; services = only services + health (data and Vault already done)
+    restore_from: start
+
+  pre_tasks:
+    - name: Start time
+      ansible.builtin.set_fact:
+        restore_t0: "{{ now(utc=true).timestamp() | int }}"
+
+    # ansible-vault encrypted (see restore-secrets.example.yml); loaded at run time, so a
+    # syntax check / lint does not need the Ansible-Vault password.
+    - name: Borg passphrase from restore-secrets.yml
+      ansible.builtin.include_vars:
+        file: restore-secrets.yml
+      no_log: true
+
+  tasks:
+    # restore_from=services: continue in a VM/host where data and Vault are already
+    # done (e.g. after fixing a service) -- skips everything up to here.
+    - name: Data and Vault
+      when: restore_from == "start"
+      block:
+        # ------------------------------------------------------------------ checks
+        # Committed to the repo (and its mirror) -- must never be plaintext.
+        - name: Secrets file restore-secrets.yml is vault-encrypted
+          ansible.builtin.command: head -c 15 {{ (playbook_dir ~ '/restore-secrets.yml') | quote }}
+          register: restore_secrets_head
+          changed_when: false
+          check_mode: false
+          failed_when: restore_secrets_head.stdout != '$ANSIBLE_VAULT;'
+          delegate_to: localhost
+          become: false
+
+        - name: Borg passphrase available (restore-secrets.yml)
+          ansible.builtin.assert:
+            that: vault_borg_passphrase_docker | default('') not in ['', 'CHANGE-ME']
+            fail_msg: >-
+              restore-secrets.yml enthält keine Borg-Passphrase. Ändern mit
+              'ansible-vault edit restore-secrets.yml' (Passwort = Vaultwarden "Ansible-Vault"),
+              Zeile: vault_borg_passphrase_docker: "<Borg-Passphrase>"
+            quiet: true
+
+        - name: Repo checkout, SOPS key and Borg repo present
+          ansible.builtin.stat:
+            path: "{{ item }}"
+          loop: ["{{ restore_repo }}/config/versions.yaml", "{{ restore_sops_key }}", "{{ restore_borg_repo }}"]
+          register: restore_inputs
+          failed_when: not restore_inputs.stat.exists
+
+        - name: Content of the restore target
+          ansible.builtin.find:
+            paths: "{{ restore_target }}"
+            file_type: any
+            hidden: true
+          register: restore_existing
+
+        - name: Never restore over existing data
+          ansible.builtin.assert:
+            that: restore_existing.matched == 0
+            fail_msg: >-
+              {{ restore_target }} ist nicht leer ({{ restore_existing.matched }} Einträge).
+              restore.yml überschreibt nie einen bestehenden Stand.
+            quiet: true
+
+        - name: Newest archive
+          ansible.builtin.command: borg2 --repo {{ restore_borg_repo }} repo-list --last 1 --json
+          environment:
+            BORG_PASSPHRASE: "{{ vault_borg_passphrase_docker }}"
+            BORG_RELOCATED_REPO_ACCESS_IS_OK: "yes"
+          register: restore_archives
+          changed_when: false
+          no_log: true
+
+        - name: Archive to restore
+          ansible.builtin.set_fact:
+            restore_archive: "{{ (restore_archives.stdout | from_json).archives[0] }}"
+
+        # Archives made before #164 have no group/other permissions anywhere; a restore from
+        # them would break every container that reads files of another owner.
+        - name: Directories with permissions for others in the archive
+          ansible.builtin.shell: |
+            set -o pipefail
+            borg2 --repo {{ restore_borg_repo | quote }} list aid:{{ restore_archive.id }} --format '{mode}{NL}' \
+              | grep -c '^d......r.x' || true
+          args:
+            executable: /bin/bash
+          environment:
+            BORG_PASSPHRASE: "{{ vault_borg_passphrase_docker }}"
+            BORG_RELOCATED_REPO_ACCESS_IS_OK: "yes"
+          register: restore_archive_perms
+          changed_when: false
+          no_log: true
+
+        - name: "Archive keeps the permissions (#164)"
+          ansible.builtin.assert:
+            that: restore_archive_perms.stdout | int > 0
+            fail_msg: "Archiv {{ restore_archive.time }} hat keine group/other-Rechte (vor dem Fix #164) -- neueres Archiv nötig."
+            success_msg: "Archiv {{ restore_archive.name }} vom {{ restore_archive.time }}, Rechte ok"
+
+        # ------------------------------------------------------------------ /opt/docker
+        - name: Restore target
+          ansible.builtin.file:
+            path: "{{ restore_target }}"
+            state: directory
+            owner: "{{ admin_user }}"
+            group: "{{ admin_user }}"
+            mode: "0755"
+
+        # --numeric-ids: owners as numbers, not names. The files belong to container UIDs
+        # (e.g. Supabase's postgres) that happen to have some name on the old host
+        # ("messagebus") -- on a new host that name has another UID, and without this the
+        # containers cannot read their own files (DR test 2026-11-10).
+        - name: Extract /opt/docker from Borg
+          ansible.builtin.command:
+            cmd: >-
+              borg2 --repo {{ restore_borg_repo }} extract --numeric-ids
+              --strip-components {{ restore_strip_components }} aid:{{ restore_archive.id }}
+            chdir: "{{ restore_target }}"
+          environment:
+            BORG_PASSPHRASE: "{{ vault_borg_passphrase_docker }}"
+            BORG_RELOCATED_REPO_ACCESS_IS_OK: "yes"
+          changed_when: true
+          no_log: true
+
+        - name: Restored secrets present
+          ansible.builtin.stat:
+            path: "{{ restore_target }}/secrets/update_runner_vault_role_id.txt"
+          register: restore_secrets
+          failed_when: not restore_secrets.stat.exists
+
+        - name: Extract finished
+          ansible.builtin.set_fact:
+            restore_t_extract: "{{ now(utc=true).timestamp() | int }}"
+
+        # ------------------------------------------------------------------ images
+        - name: Locally built vault-agent image (sidecar of MariaDB, Postgres, Supabase)
+          ansible.builtin.command:
+            argv: >-
+              {{ ['docker', 'build', '--pull', '-t', restore_vault_agent_image]
+                 + (['--build-arg', 'http_proxy=' ~ proxy_env.http_proxy,
+                     '--build-arg', 'https_proxy=' ~ proxy_env.https_proxy] if proxy_env is defined else [])
+                 + [restore_repo ~ '/services/vault-agent'] }}
+          changed_when: true
+
+        # ------------------------------------------------------------------ Vault
+        - name: Vault data directory (owned by the image user vault, uid 100)
+          ansible.builtin.file:
+            path: "{{ restore_vault_data }}"
+            state: directory
+            owner: "100"
+            group: "1000"
+            mode: "0700"
+
+        - name: Vault audit log directory
+          ansible.builtin.file:
+            path: "{{ restore_target }}/vault/logs"
+            state: directory
+            owner: "100"
+            group: "1000"
+            mode: "0750"
+
+        - name: Start Vault
+          ansible.builtin.include_tasks: tasks/restore-compose-sops.yml
+          vars:
+            restore_svc: vault
+
+        - name: Vault API answers
+          ansible.builtin.command: docker exec vault vault status -address=http://127.0.0.1:8200 -format=json
+          register: restore_vault_status
+          changed_when: false
+          failed_when: restore_vault_status.rc not in [0, 2]
+          retries: 30
+          delay: 2
+          until: restore_vault_status.rc in [0, 2]
+
+        - name: Restore Vault from a snapshot
+          ansible.builtin.include_tasks: tasks/restore-vault-snapshot.yml
+          when: restore_vault_snapshot | length > 0
+
+        - name: Unseal Vault now (the keys never pass through Ansible)
+          ansible.builtin.pause:
+            prompt: |
+
+              ============================================================
+              HashiCorp Vault ist gestartet und versiegelt. Jetzt in einem ZWEITEN Terminal
+              mit den Vault-UNSEAL-KEYS entsiegeln (nicht das Ansible-Vault-Passwort):
+
+                ssh {{ admin_user }}@{{ ansible_host }}
+                docker exec -it vault vault operator unseal -address=http://127.0.0.1:8200
+
+              (so oft wiederholen, bis "Sealed false"), dann hier Enter.
+              Achtung: die IP oben gilt für DIESEN Lauf (die Test-VM bekommt jedes Mal eine neue).
+              Nach Enter wartet das Playbook noch bis zu 10 Minuten auf das Entsiegeln.
+              ============================================================
+          when: (restore_vault_status.stdout | from_json).sealed
+
+        - name: Vault is unsealed
+          ansible.builtin.command: docker exec vault vault status -address=http://127.0.0.1:8200 -format=json
+          register: restore_vault_unsealed
+          changed_when: false
+          failed_when: (restore_vault_unsealed.stdout | from_json).sealed
+          # Up to 10 minutes: unsealing may also happen after Enter.
+          retries: 120
+          delay: 5
+          until: not (restore_vault_unsealed.stdout | from_json).sealed
+
+        - name: Vault ready
+          ansible.builtin.set_fact:
+            restore_t_vault: "{{ now(utc=true).timestamp() | int }}"
+
+    # ------------------------------------------------------------------ services
+    - name: Vault is unsealed (continue mode)
+      ansible.builtin.command: docker exec vault vault status -address=http://127.0.0.1:8200 -format=json
+      register: restore_vault_cont
+      changed_when: false
+      failed_when: restore_vault_cont.rc not in [0, 2] or (restore_vault_cont.stdout | from_json).sealed
+      when: restore_from != "start"
+
+    # Loki keeps its data on /data (SSD). If that is lost (or in the test VM), Docker
+    # would create the bind-mount source as root and Loki (uid 10001) could not write:
+    # "mkdir /loki/chunks: permission denied" (DR test 2026-11-10). Starts empty then.
+    - name: Loki data directory
+      ansible.builtin.file:
+        path: /data/loki
+        state: directory
+        owner: "10001"
+        group: "10001"
+        mode: "0750"
+
+    - name: Nextcloud placeholder data directory (DR test only)
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: "{{ item.state }}"
+        owner: "33"
+        group: "33"
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: /mnt/nextcloud/nextcloud, state: directory, mode: "0770" }
+        - { path: /mnt/nextcloud/nextcloud/.ocdata, state: touch, mode: "0644" }
+      when: restore_nextcloud_placeholder | bool
+
+    - name: Services in order
+      ansible.builtin.include_tasks: tasks/restore-service.yml
+      loop: "{{ restore_order | flatten | reject('equalto', 'vault') | list }}"
+      loop_control:
+        loop_var: restore_svc
+
+    - name: Services started
+      ansible.builtin.set_fact:
+        restore_t_services: "{{ now(utc=true).timestamp() | int }}"
+
+    # ------------------------------------------------------------------ health
+    - name: Containers healthy (up to 5 minutes)
+      ansible.builtin.shell: |
+        set -o pipefail
+        docker ps -a --format '{{ "{{" }}.Names{{ "}}" }} {{ "{{" }}.Status{{ "}}" }}' \
+          | grep -vE '\(healthy\)|^[^ ]+ Up [^(]*$|vault-agent .*Exited \(0\)' || true
+      args:
+        executable: /bin/bash
+      register: restore_unhealthy
+      changed_when: false
+      retries: 30
+      delay: 10
+      until: restore_unhealthy.stdout | length == 0
+      failed_when: false
+
+    - name: Result
+      ansible.builtin.debug:
+        msg:
+          - "Archiv:            {{ restore_archive.name | default('-') }} vom {{ restore_archive.time | default('-') }}"
+          - "Borg-Restore:      {{ restore_t_extract | default(restore_t0) | int - restore_t0 | int }} s"
+          - "bis Vault bereit:  {{ restore_t_vault | default(restore_t0) | int - restore_t0 | int }} s (inkl. Entsiegeln)"
+          - "Dienste gestartet: {{ restore_t_services | int - restore_t0 | int }} s"
+          - "nicht gesund:      {{ restore_unhealthy.stdout_lines | default([]) | join(', ') or 'keine' }}"
+
+# Host roles again: CrowdSec (Telegram, Traefik bouncer key) and Postfix (smtp) find
+# their restored files now.
+- name: Host layer with restored data
+  ansible.builtin.import_playbook: site.yml

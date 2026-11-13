@@ -1,0 +1,18 @@
+# Expected non-local listening ports on the ThinkCentre (ADR 007).
+# Format: <tcp|udp> <port>   # service -- anything not listed here becomes a finding.
+# Built from the first system check on 2026-11-12. Reachability is also restricted by the
+# host firewall (scripts/security/host-firewall.nft); "open" here only means: something listens.
+tcp 22     # SSH (admin, Kestra deploy)
+tcp 80     # Traefik web (LAN, .lan routers, container hairpin)
+tcp 443    # Traefik websecure
+udp 443    # AdGuard DNS-over-QUIC
+tcp 53     # AdGuard DNS
+udp 53     # AdGuard DNS
+tcp 853    # AdGuard DNS-over-TLS
+tcp 5443   # AdGuard DNSCrypt
+udp 5443   # AdGuard DNSCrypt
+tcp 2222   # Gitea SSH
+tcp 1883   # EMQX MQTT
+tcp 8083   # EMQX MQTT over WebSocket
+tcp 8080   # CrowdSec LAPI (Traefik bouncer plugin; firewall allows only localhost + containers)
+# NOT expected: tcp 3389 (xrdp) -- disabled and masked (role base) since 2026-11-12

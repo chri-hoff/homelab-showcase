@@ -1,0 +1,64 @@
+---
+# Everything that keeps data safe and the host observable: backup cron jobs, log
+# rotation for the logs CrowdSec and Loki read, SMART monitoring with Telegram alert.
+
+- name: Root cron jobs
+  ansible.builtin.cron:
+    name: "{{ item.name }}"
+    user: root
+    minute: "{{ item.minute | default('*') }}"
+    hour: "{{ item.hour | default('*') }}"
+    weekday: "{{ item.weekday | default('*') }}"
+    job: "{{ item.job }}"
+    disabled: "{{ not backup_cron_enabled }}"
+  loop: "{{ backup_cron_jobs }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Log rotation Traefik access log (read by CrowdSec)
+  ansible.builtin.copy:
+    src: "{{ homelab_repo }}/config/logrotate/traefik"
+    dest: /etc/logrotate.d/traefik
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Log rotation Vault audit log
+  ansible.builtin.copy:
+    src: "{{ homelab_repo }}/scripts/vault/vault-audit.logrotate"
+    dest: /etc/logrotate.d/vault-audit
+    owner: root
+    group: root
+    mode: "0644"
+
+# --- SMART monitoring (#151) ---
+- name: SMART Telegram hook
+  ansible.builtin.copy:
+    src: "{{ homelab_repo }}/scripts/security/smartd-telegram.sh"
+    dest: /etc/smartmontools/run.d/20telegram
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: SMART monitoring configuration
+  ansible.builtin.template:
+    src: smartd.conf.j2
+    dest: /etc/smartd.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart smartd
+
+- name: SMART monitoring running
+  ansible.builtin.systemd_service:
+    name: smartmontools
+    enabled: true
+    state: started
+  when: backup_smartd_devices | length > 0 or backup_smartd_devicescan
+
+- name: SMART monitoring off when there is nothing to watch (VM)
+  ansible.builtin.systemd_service:
+    name: smartmontools
+    enabled: false
+    state: stopped
+  when: backup_smartd_devices | length == 0 and not backup_smartd_devicescan

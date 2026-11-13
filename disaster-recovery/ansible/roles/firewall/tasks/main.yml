@@ -1,0 +1,102 @@
+---
+- name: Nftables installed
+  ansible.builtin.package:
+    name: nftables
+    state: present
+
+# nftables.service loads /etc/nftables.conf with "flush ruleset", which would also
+# remove Docker's and CrowdSec's tables (host-firewall.sh, #126).
+- name: Nftables.service masked
+  ansible.builtin.systemd_service:
+    name: nftables.service
+    enabled: false
+    masked: true
+
+# Lock-out guard: the address Ansible connects from must be allowed to SSH, either by
+# admin_v4 in the ruleset or by firewall_extra_admin_v4.
+- name: Admin networks from the ruleset
+  ansible.builtin.set_fact:
+    firewall_admin_v4: >-
+      {{ (lookup('ansible.builtin.file', firewall_rules_src)
+          | regex_search('set admin_v4 \{[^}]*elements = \{([^}]*)\}', '\1') | first)
+         | regex_findall('[0-9.]+/[0-9]+') + firewall_extra_admin_v4 }}
+
+# SSH_CLIENT of the login user; sudo (become) would drop it from the environment.
+# Skipped with connection local (weekly drift check on the host itself, ADR 007): there
+# is no SSH session that the firewall could cut.
+- name: Address Ansible connects from
+  ansible.builtin.command: printenv SSH_CLIENT
+  become: false
+  changed_when: false
+  check_mode: false
+  register: firewall_ssh_client
+  when: ansible_connection != 'local'
+
+- name: Controller address is allowed to SSH
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - |
+        import ipaddress, sys
+        ip = ipaddress.ip_address(sys.argv[1])
+        sys.exit(0 if any(ip in ipaddress.ip_network(n) for n in sys.argv[2].split()) else 1)
+      - "{{ firewall_ssh_client.stdout.split()[0] }}"
+      - "{{ firewall_admin_v4 | join(' ') }}"
+  become: false
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  register: firewall_guard
+  when: ansible_connection != 'local'
+
+- name: Stop before locking out the controller
+  ansible.builtin.fail:
+    msg: >-
+      {{ firewall_ssh_client.stdout.split()[0] }} liegt in keinem erlaubten SSH-Netz
+      ({{ firewall_admin_v4 | join(', ') }}). Die Firewall würde diese Verbindung trennen;
+      firewall_extra_admin_v4 in host_vars setzen.
+  when: ansible_connection != 'local' and firewall_guard.rc != 0
+
+- name: Ruleset directory
+  ansible.builtin.file:
+    path: "{{ firewall_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Ruleset
+  ansible.builtin.copy:
+    src: "{{ firewall_rules_src }}"
+    dest: "{{ firewall_dir }}/host-firewall.nft"
+    owner: root
+    group: root
+    mode: "0644"
+    validate: nft -c -f %s
+  notify: Reload host firewall
+
+- name: Host-specific additions
+  ansible.builtin.template:
+    src: local.nft.j2
+    dest: "{{ firewall_dir }}/local.nft"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload host firewall
+
+- name: Unit host-firewall.service
+  ansible.builtin.template:
+    src: host-firewall.service.j2
+    dest: /etc/systemd/system/host-firewall.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload host firewall
+
+- name: Host firewall enabled and started
+  ansible.builtin.systemd_service:
+    name: host-firewall.service
+    enabled: true
+    state: started
+    daemon_reload: true

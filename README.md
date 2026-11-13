@@ -16,6 +16,8 @@ one-click installer. Each folder is a working stack you can read, copy and adapt
 | **[Edge security](edge-security/)** | Traefik middleware chains per exposure level (internal / trusted / public), Authentik SSO, CrowdSec at HTTP and firewall level with a custom scenario and a cloud-network blocklist approved in Telegram, and a host firewall that rolls itself back if I lock myself out. |
 | **[Container hardening](container-hardening/)** | Every container drops all capabilities and gets back only what its image provably needs, with `no-new-privileges`, memory and PID limits and health checks. A check script fails on any unjustified gap, daemon defaults cover ad-hoc containers, and a weekly Trivy scan reports fixable CVEs. |
 | **[Detection](detection/)** | Security alerts as code: SSH logins, failed sudo, account and critical-file changes (auditd), AppArmor denials, OOM kills and deploys outside the pipeline go from the journal through Loki to Grafana and Telegram. One provisioned rule per file, each with its rationale and a tested trigger. |
+| **[Disaster recovery](disaster-recovery/)** | Ansible rebuilds the host layer (disks, Docker, firewall, CrowdSec, mail, auditd), then the services come back from Borg and a Vault snapshot through the same deploy path as every day. Tested end to end in an isolated VM behind an allowlist proxy: about one hour from an empty VM to 36 healthy containers. |
+| **[Weekly system checks](system-checks/)** | Every Friday a script audits the host (containers, backups, disks, certificates, Trivy, Lynis, open ports, apt, Ansible drift). Scripts decide what is a finding; Claude Haiku only writes the explanation from redacted findings. Each finding becomes one deduplicated Gitea issue and a task, and is followed up until it is fixed. |
 
 ## Architecture
 
@@ -58,6 +60,8 @@ flowchart TB
 | [`edge-security/`](edge-security/) | Traefik static and dynamic config, Authentik, CrowdSec, host firewall and hardening |
 | [`container-hardening/`](container-hardening/) | Hardening baseline, ADR, check script and matrix, Docker daemon config, Trivy scan |
 | [`detection/`](detection/) | Grafana alert rules as code, auditd watch list, alert test runbook, ADR |
+| [`disaster-recovery/`](disaster-recovery/) | Ansible playbooks and roles for the host, restore playbook, isolated VM test, runbook, ADR |
+| [`system-checks/`](system-checks/) | Weekly host audit, issue sync, n8n workflow for the Claude review, allowlists, ADR |
 | [`observability/`](observability/) | Prometheus, Grafana, Loki, Alloy, cAdvisor, Uptime Kuma |
 | [`cloud/`](cloud/) | Nextcloud and Collabora Online |
 | [`backup/`](backup/) | Borg backup for Nextcloud, Duplicati |

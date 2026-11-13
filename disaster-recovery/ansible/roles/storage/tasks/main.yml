@@ -1,0 +1,105 @@
+---
+# Data disks survive a system-disk failure (#157 scenario). This role only re-attaches
+# them: keyfile, crypttab, fstab, mount. It never formats or partitions anything.
+
+- name: Cryptsetup installed
+  ansible.builtin.apt:
+    name: cryptsetup
+    state: present
+  when: storage_luks | length > 0
+
+# A plaintext keyfile in the repo would be a leak: refuse anything that is not
+# ansible-vault encrypted. (head, not the file lookup: that one decrypts transparently.)
+- name: LUKS keyfiles are vault-encrypted on the controller
+  ansible.builtin.command: head -c 15 {{ (storage_luks_dir ~ '/' ~ item.keyfile ~ '.vault') | quote }}
+  register: storage_keyfile_head
+  changed_when: false
+  check_mode: false
+  failed_when: storage_keyfile_head.rc != 0 or storage_keyfile_head.stdout != '$ANSIBLE_VAULT;'
+  loop: "{{ storage_luks }}"
+  loop_control:
+    label: "{{ item.keyfile }}"
+  delegate_to: localhost
+  become: false
+
+- name: LUKS keyfiles
+  ansible.builtin.copy:
+    src: "{{ storage_luks_dir }}/{{ item.keyfile }}.vault"
+    dest: "/root/{{ item.keyfile }}"
+    decrypt: true
+    owner: root
+    group: root
+    mode: "0600"
+  loop: "{{ storage_luks }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+
+- name: Crypttab entries
+  community.general.crypttab:
+    name: "{{ item.name }}"
+    backing_device: "UUID={{ item.uuid }}"
+    password: "/root/{{ item.keyfile }}"
+    opts: luks,nofail
+    state: present
+  loop: "{{ storage_luks }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Data disks present
+  ansible.builtin.stat:
+    path: "/dev/disk/by-uuid/{{ item.uuid }}"
+  loop: "{{ storage_luks }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: storage_disks
+
+- name: Missing data disks
+  ansible.builtin.debug:
+    msg: "Platte für {{ item.item.name }} (UUID {{ item.item.uuid }}) nicht gefunden -- wird übersprungen."
+  loop: "{{ storage_disks.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: not item.stat.exists
+
+# Opened directly instead of via systemd-cryptsetup@<name> (unit names need escaping);
+# after the next boot crypttab takes over.
+- name: LUKS containers opened
+  ansible.builtin.command: >-
+    cryptsetup open --type luks --key-file /root/{{ item.item.keyfile }}
+    /dev/disk/by-uuid/{{ item.item.uuid }} {{ item.item.name }}
+  args:
+    creates: "/dev/mapper/{{ item.item.name }}"
+  loop: "{{ storage_disks.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: item.stat.exists
+
+- name: Wait for udev (by-label links of the opened containers)
+  ansible.builtin.command: udevadm settle
+  changed_when: false
+  check_mode: false
+
+- name: Mount sources present
+  ansible.builtin.stat:
+    path: >-
+      {{ '/dev/disk/by-uuid/' ~ item.src[5:] if item.src.startswith('UUID=')
+         else '/dev/disk/by-label/' ~ item.src[6:] if item.src.startswith('LABEL=')
+         else item.src }}
+  loop: "{{ storage_mounts }}"
+  loop_control:
+    label: "{{ item.path }}"
+  register: storage_sources
+
+# Missing disk: only the fstab line is written (nofail), nothing is mounted.
+- name: Mount points and fstab
+  ansible.posix.mount:
+    path: "{{ item.item.path }}"
+    src: "{{ item.item.src }}"
+    fstype: "{{ item.item.fstype | default('ext4') }}"
+    opts: "{{ item.item.opts }}"
+    passno: "{{ item.item.passno | default(0) }}"
+    state: "{{ 'mounted' if item.stat.exists else 'present' }}"
+  loop: "{{ storage_sources.results }}"
+  loop_control:
+    label: "{{ item.item.path }}"

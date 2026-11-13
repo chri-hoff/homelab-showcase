@@ -1,0 +1,17 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Homelab Host-Firewall (nftables, nur Tabelle inet host-firewall)
+Wants=network-pre.target
+Before=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f {{ firewall_dir }}/host-firewall.nft
+ExecStart=/usr/sbin/nft -f {{ firewall_dir }}/local.nft
+ExecReload=/usr/sbin/nft -f {{ firewall_dir }}/host-firewall.nft
+ExecReload=/usr/sbin/nft -f {{ firewall_dir }}/local.nft
+ExecStop=/usr/sbin/nft delete table inet host-firewall
+
+[Install]
+WantedBy=multi-user.target

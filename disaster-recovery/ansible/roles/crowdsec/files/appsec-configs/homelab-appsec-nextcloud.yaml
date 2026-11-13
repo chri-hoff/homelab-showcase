@@ -1,0 +1,13 @@
+# Exceptions for Nextcloud's WebDAV sync (#190). Loaded next to crowdsecurity/appsec-default
+# (acquis.d/appsec.yaml), it only adds hooks and keeps all rules of the default config.
+#
+# vpatch-git-config blocks requests that touch ".git/config" -- right for scanners, but
+# the Nextcloud desktop client syncs folders that contain git repositories: PROPFIND/GET/PUT
+# on /remote.php/dav/files/<user>/.../.git/... was blocked (403) on 2026-11-13, from the
+# laptop and a second client. Only Nextcloud serves /remote.php/, so the rule is removed
+# for that path only; every other public service keeps it.
+name: homelab/appsec-nextcloud
+pre_eval:
+  - filter: IsInBand == true && req.URL.Path startsWith "/remote.php/"
+    apply:
+      - RemoveInBandRuleByName("crowdsecurity/vpatch-git-config")

@@ -1,0 +1,89 @@
+# Kestra flow: weekly system checks (ADR 007).
+#
+# Friday 06:30, after the night's backups (01:00-03:15). Telegram at the start, then:
+#   1. homelab-deploy system-check on the host (read-only, findings as JSON;
+#      scripts/maintenance/system-check.py decides what is a finding)
+#   2. scripts/kestra/system-check-issues.py: Gitea issues as kestra-bot (dedup by
+#      fingerprint), Mindwtr task in Homelab / Issues, reminder/resolved comments
+#   3. Telegram summary
+#
+# DRY_RUN "false" since 2026-11-12 (live). "true": everything is read and reported to Telegram, but no issue, comment or
+# Mindwtr task is created. Switch to "false" once a few runs look right.
+# Stage 2b: redacted findings -> n8n workflow system-check-review (Claude Haiku 5.5) writes the
+# issue texts and the Telegram summary; on any failure the fixed template is used.
+
+id: system-checks
+namespace: homelab
+
+triggers:
+  - id: weekly
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "30 6 * * 5"
+    timezone: Europe/Berlin
+
+tasks:
+  - id: notify-start
+    type: io.kestra.plugin.scripts.shell.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    env:
+      BOT_TOKEN: "{{ secret('TELEGRAM_BOT_TOKEN') }}"
+      CHAT_ID: "{{ secret('TELEGRAM_CHAT_ID') }}"
+    commands:
+      - python3 /repo/scripts/kestra/telegram-send.py "🩺 Systemcheck läuft …"
+
+  - id: check
+    type: io.kestra.plugin.fs.ssh.Command
+    # #100: the only path to the host -- homelab-deploy (forced command)
+    host: 172.22.0.1
+    username: deploy
+    authMethod: PUBLIC_KEY
+    privateKey: "{{ secret('DEPLOY_SSH_KEY') }}"
+    # Lynis and the Ansible drift check take a few minutes
+    timeout: PT30M
+    commands:
+      - system-check
+
+  - id: issues
+    type: io.kestra.plugin.scripts.shell.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    env:
+      DRY_RUN: "false"
+      FINDINGS: "{{ outputs.check.vars.findings }}"
+      GITEA_URL: http://gitea:3000
+      GITEA_REPO: owner/homelab
+      GITEA_TOKEN: "{{ secret('KESTRA_BOT_GITEA_TOKEN') }}"
+      GITEA_BOT_USER: kestra-bot
+      # push-mirror state needs repo admin -> Kestra's existing Gitea token, read only here
+      GITEA_MIRROR_TOKEN: "{{ secret('GITEA_TOKEN') }}"
+      MINDWTR_URL: http://mindwtr-cloud:8787
+      MINDWTR_TOKEN: "{{ secret('MINDWTR_TOKEN') }}"
+      MINDWTR_PROJECT: Homelab
+      MINDWTR_SECTION: Issues
+      # Stage 2b: Claude Haiku 5.5 via n8n writes the texts (redacted input); empty URL = template only
+      N8N_REVIEW_URL: http://n8n:5678/webhook/system-check-review
+      N8N_WEBHOOK_SECRET: "{{ secret('N8N_WEBHOOK_SECRET') }}"
+      # Stage 2b: update candidates older than 14 days (read only)
+      SUPABASE_URL: http://supabase-envoy:8000
+      SUPABASE_ANON_KEY: "{{ secret('SUPABASE_ANON_KEY') }}"
+      SUPABASE_JWT: "{{ secret('SUPABASE_SYNC_JWT') }}"
+      BOT_TOKEN: "{{ secret('TELEGRAM_BOT_TOKEN') }}"
+      CHAT_ID: "{{ secret('TELEGRAM_CHAT_ID') }}"
+    commands:
+      - |
+        RC=0
+        python3 /repo/scripts/kestra/system-check-issues.py || RC=1
+        python3 /repo/scripts/kestra/telegram-send.py < summary.txt
+        exit $RC
+
+errors:
+  - id: telegram-on-failure
+    type: io.kestra.plugin.scripts.shell.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    env:
+      BOT_TOKEN: "{{ secret('TELEGRAM_BOT_TOKEN') }}"
+      CHAT_ID: "{{ secret('TELEGRAM_CHAT_ID') }}"
+    commands:
+      - python3 /repo/scripts/kestra/telegram-send.py "❌ Systemcheck fehlgeschlagen ({{ execution.id }}) -- siehe Kestra"

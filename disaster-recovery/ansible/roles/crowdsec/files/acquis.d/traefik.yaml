@@ -1,0 +1,4 @@
+filenames:
+  - /opt/docker/traefik/logs/access.log
+labels:
+  type: traefik
