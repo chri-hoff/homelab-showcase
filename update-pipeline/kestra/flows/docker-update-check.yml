@@ -20,6 +20,9 @@ triggers:
     type: io.kestra.plugin.core.trigger.Schedule
     cron: "0 7 * * *"
     timezone: Europe/Berlin
+    # Kestra's default ALL replays every missed slot after an outage (2026-11-15:
+    # ~350 telegram-listener runs at once). The next regular run is enough.
+    recoverMissedSchedules: NONE
   - id: telegram-trigger
     type: io.kestra.plugin.core.trigger.Webhook
     # From Vault (homelab/services/kestra-webhooks, field docker_update_check)

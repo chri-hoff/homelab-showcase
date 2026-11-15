@@ -212,7 +212,7 @@ again), the CrowdSec console enrollment (`cscli console enroll` if wanted).
 | only wd-750 (Vault data) | host keeps running; new disk, Vault from snapshot (`docs/runbooks/vault-restore.md`) |
 | SSD `sda` (`/data`, `/home`) | Borg repo and Vault snapshots are gone locally -- restore them from OneDrive with Duplicati first; the SOPS key is also on the laptop; then as above |
 | Nextcloud disk | Borg repo on `/mnt/bk_nxc_data` (`scripts/backup/backup_nextcloud_borg.sh`) |
-| both Nextcloud disks | no offsite copy yet (open point) |
+| both Nextcloud disks | Borg repo from the Hetzner Storage Box (`docs/runbooks/offsite-storagebox.md` §Restore); the repo passphrase is in Vault, Vaultwarden and `restore-secrets.yml` |
 
 ---
 

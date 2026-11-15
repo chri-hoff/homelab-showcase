@@ -16,6 +16,9 @@ triggers:
     # between backup-vault (02:30) and backup-mariadb (03:00)
     cron: "45 2 * * *"
     timezone: Europe/Berlin
+    # After an outage (e.g. Vault sealed after reboot, 2026-11-15) run the missed
+    # slot once, not every one of them.
+    recoverMissedSchedules: LAST
 
 tasks:
   - id: backup-postgres

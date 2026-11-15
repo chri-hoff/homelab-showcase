@@ -29,9 +29,22 @@ backup_cron_jobs:
     minute: "15"
     hour: "2"
     job: "{{ backup_repo }}/scripts/backup/backup_docker_loki.sh"
+  # Off-site copy of the Nextcloud Borg repo to the Hetzner Storage Box (#202). Waits for
+  # the 01:00 backup's lock; stops after MAX_RUNTIME (default 20 h) so 01:00 stays free.
+  - name: Off-site copy Nextcloud Borg repo (Storage Box)
+    minute: "30"
+    hour: "3"
+    job: "{{ backup_repo }}/scripts/backup/sync_offsite_nextcloud.sh > /dev/null 2>&1"
   - name: Vault seal check
     minute: "*/5"
     job: "{{ backup_repo }}/scripts/vault/check_vault_sealed.sh >> /var/log/check_vault_sealed.log 2>&1"
+  # Message right before the 02:00 unattended-upgrades reboot (Vault comes back sealed,
+  # accepted 2026-11-15), so the cause is known in the morning. Silent when no reboot
+  # is pending. Keep it a few minutes before Automatic-Reboot-Time.
+  - name: Pending reboot notice
+    minute: "55"
+    hour: "1"
+    job: "{{ backup_repo }}/scripts/maintenance/notify_pending_reboot.sh >> /var/log/notify_pending_reboot.log 2>&1"
 
 # smartd: disks to watch before DEVICESCAN (smartd ignores everything after it).
 # Empty list and no DEVICESCAN = smartd not configured (VM).

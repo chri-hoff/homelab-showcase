@@ -129,10 +129,10 @@ services:
     notes: "regular update"
 
   nextcloud:
-    version: "35.0.2"
+    version: "35.0.3"
     image: "nextcloud"
     stack: "nextcloud"
-    last_updated: "2026-10-29"
+    last_updated: "2026-11-14"
     updateable: true
     breaking_changes: false
     notes: "Security update"
@@ -235,10 +235,10 @@ services:
     notes: "automatisch erkannt (Check-Lauf)"
 
   traefik:
-    version: "v3.7.18"
+    version: "v3.7.19"
     image: "traefik"
     stack: "traefik"
-    last_updated: "2026-11-11"
+    last_updated: "2026-11-14"
     updateable: false
     breaking_changes: false
     notes: ""

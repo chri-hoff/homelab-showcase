@@ -17,6 +17,9 @@ triggers:
     type: io.kestra.plugin.core.trigger.Schedule
     cron: "30 2 * * *"
     timezone: Europe/Berlin
+    # After an outage (e.g. Vault sealed after reboot, 2026-11-15) run the missed
+    # slot once, not every one of them.
+    recoverMissedSchedules: LAST
 
 tasks:
   - id: backup-vault

@@ -128,7 +128,9 @@
       failed_when: >-
         'backup_docker_loki.sh' not in verify_cron.stdout or
         'backup_nextcloud_borg.sh' not in verify_cron.stdout or
-        'check_vault_sealed.sh' not in verify_cron.stdout
+        'sync_offsite_nextcloud.sh' not in verify_cron.stdout or
+        'check_vault_sealed.sh' not in verify_cron.stdout or
+        'notify_pending_reboot.sh' not in verify_cron.stdout
 
     - name: Postfix relays via smtp and only listens locally
       ansible.builtin.command: postconf -h relayhost inet_interfaces

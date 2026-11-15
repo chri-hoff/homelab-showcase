@@ -25,7 +25,8 @@ from datetime import datetime, timedelta, timezone
 
 REPO = os.environ.get("HOMELAB_REPO", "/data/gitea/homelab")
 BACKUP_LOG_DIR = "/data/backup/ThinkCentre/log"
-BACKUP_JOBS = {"docker": "docker.log", "nextcloud": "nextcloud.log"}
+BACKUP_JOBS = {"docker": "docker.log", "nextcloud": "nextcloud.log",
+               "offsite-nextcloud": "offsite-nextcloud.log"}   # Storage Box copy (#202)
 BACKUP_MAX_AGE_H = 26          # last successful run (the night before the check)
 BACKUP_ERROR_LOOKBACK_D = 8    # weekly run: report errors of the whole week
 # Duplicati result reports, written by the Kestra flow duplicati-report (/state in Kestra)

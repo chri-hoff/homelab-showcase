@@ -25,6 +25,9 @@ triggers:
     # minute 7: never at the same time as the 04:15 sync or the full hour
     cron: "7 * * * *"
     timezone: Europe/Berlin
+    # Kestra's default ALL replays every missed slot after an outage (2026-11-15:
+    # ~350 telegram-listener runs at once). The next regular run is enough.
+    recoverMissedSchedules: NONE
 
 tasks:
   - id: alerts
