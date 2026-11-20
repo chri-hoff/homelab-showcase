@@ -50,5 +50,7 @@ listed at the end of the [runbook](ansible/README.md#6-lessons-from-the-tests).
 | [`dr-restore-test.md`](dr-restore-test.md) | test checklist, every six months (German, pasted into my task app) |
 | [`006-disaster-recovery-ansible-host-layer.md`](006-disaster-recovery-ansible-host-layer.md) | ADR |
 
-Not covered yet: losing the data disks together with the host -- offsite copies of the data
-are the next step.
+Losing the data disks together with the host is covered since November 2026: the Nextcloud
+repository is mirrored to a storage box (see [`backup/`](../backup/)), the other backups go
+off-site with Duplicati. Not covered in the VM test: Nextcloud's data itself (too large for
+the laptop).

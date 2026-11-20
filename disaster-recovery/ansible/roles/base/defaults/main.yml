@@ -11,6 +11,10 @@ base_packages:
   - apt-listchanges
   - bind9-dnsutils
   - borgbackup2
+  # borg2 reads repos over sftp:// only with paramiko (not pulled in by borgbackup2) --
+  # needed to restore from the Hetzner Storage Box (#202). Without it: "Invalid or
+  # unsupported Backend Storage URL".
+  - python3-paramiko
   - btop
   - ca-certificates
   - curl

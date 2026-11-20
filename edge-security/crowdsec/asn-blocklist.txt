@@ -14,3 +14,6 @@ AS14061   # DigitalOcean -- 35 alerts from 19 different IPs, 2026-09-29..10-29 (
 AS396982  # Google Cloud -- 17 alerts from 8 different IPs, 2026-09-29..10-29 (.env/.git scans) | until 2027-04-27
 # Not AS15169 (Google's main network: Googlebot, Gmail, APIs), although one of the
 # 8 Google scanners came from there.
+# Not AS0: that is "no ASN" (private/LAN IPs, e.g. own WAF tests on 2026-11-13). It was
+# approved by mistake on 2026-11-16 and removed again: RIPEstat has no prefixes for it,
+# so the sync aborted and would have let all bans expire.

@@ -39,6 +39,7 @@ First stage of checks:
 | Area | Check | Finding when |
 |---|---|---|
 | Containers & backups | container state | `unhealthy`, restart loop, `exited` (except the one-shot `*-vault-agent` with exit 0) |
+| | docker-socket-proxy | socket inode in the container differs from the host's: the proxy hangs on a socket dockerd has recreated (added 2026-11-18 after the outage of 2026-11-17; Uptime Kuma cannot see this, it queries through the proxy) |
 | | backup runs | no successful run ("Skript beendet") within 26 h, or any `ERROR` in the last 8 days – read from the log files on the host, so the check does not depend on Loki |
 | | Duplicati (off-site) | no successful run within 26 h, or failures in the last 8 days, or no reports at all – from the state the Kestra flow `duplicati-report` keeps for each send-http report (added 2026-11-13 after a OneDrive outage only showed up in a mail) |
 | | disks | usage from 85 % (critical from 95 %), data disk not mounted |

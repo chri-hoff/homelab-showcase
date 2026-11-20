@@ -1,6 +1,9 @@
 # Kestra flow: weekly system checks (ADR 007).
 #
-# Friday 06:30, after the night's backups (01:00-03:15). Telegram at the start, then:
+# Friday 06:30, after the night's backups (01:00-03:15), and on demand with the Telegram
+# command "/systemcheck" (telegram-listener.yml -> webhook "telegram-trigger"). Extra runs
+# are harmless: issues are deduplicated by fingerprint and reminder comments come at most
+# every REMIND_DAYS (6) days. Telegram at the start, then:
 #   1. homelab-deploy system-check on the host (read-only, findings as JSON;
 #      scripts/maintenance/system-check.py decides what is a finding)
 #   2. scripts/kestra/system-check-issues.py: Gitea issues as kestra-bot (dedup by
@@ -23,6 +26,16 @@ triggers:
     # After an outage (e.g. Vault sealed after reboot, 2026-11-15) run the missed
     # slot once, not every one of them.
     recoverMissedSchedules: LAST
+  - id: telegram-trigger
+    type: io.kestra.plugin.core.trigger.Webhook
+    # From Vault (homelab/services/kestra-webhooks, field system_check)
+    key: "{{ secret('SYSTEM_CHECK_WEBHOOK_KEY') }}"
+
+# One run at a time: "/systemcheck" during the Friday run must not start a second one
+# (it would create the same issues/comments in parallel).
+concurrency:
+  limit: 1
+  behavior: CANCEL
 
 tasks:
   - id: notify-start

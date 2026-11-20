@@ -48,7 +48,9 @@ REMIND = timedelta(days=int(os.environ.get("REMIND_DAYS", "6")))
 BOT = os.environ.get("GITEA_BOT_USER", "kestra-bot")
 NOW = datetime.now(timezone.utc)
 CANDIDATE_MAX_AGE = timedelta(days=int(os.environ.get("CANDIDATE_MAX_AGE_D", "14")))
-FP_RE = re.compile(r"<!-- fp:(\S+) -->")
+# Fingerprints may contain spaces (Duplicati job "Vault Backup"): with (\S+) such an issue
+# was never matched and every run opened a new one (#213 -> #222, 2026-11-18).
+FP_RE = re.compile(r"<!-- fp:(.+?) -->")
 TASK_RE = re.compile(r"<!-- mindwtr:(\S+) -->")
 CLOSED_LOOKBACK = timedelta(days=int(os.environ.get("CLOSED_LOOKBACK_D", "8")))
 RESOLVED = "<!-- resolved -->"

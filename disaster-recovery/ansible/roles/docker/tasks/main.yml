@@ -44,6 +44,33 @@
     validate: dockerd --validate --config-file %s
   notify: Restart docker
 
+# docker-socket-proxy bind-mounts the socket FILE, which pins its inode. When dockerd
+# recreates /var/run/docker.sock (apt upgrade of docker-ce, the restart above), the proxy
+# keeps the dead inode thanks to live-restore and answers 503 -> Traefik loses all routes
+# (outage 2026-11-17, docs/system-checks/traefik-socket-proxy-2026-11-17.md). Reconnect it
+# after every Docker start. "-" and "|| true": never fail Docker because of this, e.g. when
+# the container does not exist yet (fresh host, DR test VM). Takes effect on the next
+# Docker start, so a daemon-reload is enough here.
+- name: Drop-in directory for docker.service
+  ansible.builtin.file:
+    path: /etc/systemd/system/docker.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Docker start reconnects docker-socket-proxy
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/docker.service.d/socket-proxy-reconnect.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (role docker). See docs/system-checks/traefik-socket-proxy-2026-11-17.md
+      [Service]
+      ExecStartPost=-/bin/sh -c 'sleep 3; /usr/bin/docker restart docker-socket-proxy >/dev/null 2>&1 || true'
+  notify: Reload systemd
+
 - name: Docker running
   ansible.builtin.systemd_service:
     name: docker

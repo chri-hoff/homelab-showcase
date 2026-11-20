@@ -99,6 +99,30 @@ def containers():
                     f"Status: {status}")
 
 
+@check("socket-proxy")
+def socket_proxy():
+    """docker-socket-proxy still on the live socket? It bind-mounts the socket FILE, so after
+    dockerd recreated it the proxy keeps a dead inode and answers 503 (outage 2026-11-17).
+    The docker.service drop-in (Ansible role docker) reconnects it; this catches the case
+    where that did not happen. Uptime Kuma cannot: it asks through the proxy itself."""
+    name = "docker-socket-proxy"
+    r = run(["docker", "inspect", "-f", "{{.State.Running}}", name])
+    if r.returncode != 0 or r.stdout.strip() != "true":
+        return  # missing or stopped: the container check reports that
+    host = os.stat("/var/run/docker.sock").st_ino
+    r = run(["docker", "exec", name, "stat", "-c", "%i", "/var/run/docker.sock"])
+    if r.returncode != 0:
+        raise RuntimeError(f"stat im Container fehlgeschlagen: {r.stderr.strip()[:200]}")
+    inner = int(r.stdout.strip())
+    if inner != host:
+        finding("socket-proxy", "stale-socket", "high",
+                "docker-socket-proxy hängt am alten Docker-Socket",
+                f"Inode Host {host}, im Container {inner}: Traefik, Alloy und Uptime Kuma bekommen "
+                f"keine Container-Daten mehr (503). Sofort: docker restart {name}. Danach prüfen, ob "
+                "das Drop-in greift: systemctl show docker -p ExecStartPost "
+                "(docs/system-checks/traefik-socket-proxy-2026-11-17.md)")
+
+
 @check("backup")
 def backups():
     for job, fname in BACKUP_JOBS.items():
@@ -117,14 +141,20 @@ def backups():
                 last_ok = ts
             if e.get("level") == "ERROR" and NOW - ts < timedelta(days=BACKUP_ERROR_LOOKBACK_D):
                 recent_errors.append(f"{ts:%d.%m. %H:%M} UTC: {e.get('message', '')[:200]}")
+        # One finding per job: a failed run produced both "no success" and "errors" for the
+        # same cause (issues #208/#209, 2026-11-15). Errors go into the no-success finding;
+        # a separate "errors" finding only when the job has recovered since.
+        errors_text = "\n".join(recent_errors[-10:])
         if last_ok is None or NOW - last_ok > timedelta(hours=BACKUP_MAX_AGE_H):
             since = f"{last_ok:%d.%m.%Y %H:%M} UTC" if last_ok else "nie (im Log)"
             finding("backup", f"no-success:{job}", "high",
                     f"Kein erfolgreiches {job}-Backup in den letzten {BACKUP_MAX_AGE_H} h",
-                    f"Letzter erfolgreicher Lauf: {since}. Log: {path}")
-        if recent_errors:
-            finding("backup", f"errors:{job}", "high", f"Fehler im {job}-Backup",
-                    "\n".join(recent_errors[-10:]))
+                    f"Letzter erfolgreicher Lauf: {since}. Log: {path}"
+                    + (f"\n\nFehler im Log:\n{errors_text}" if recent_errors else ""))
+        elif recent_errors:
+            finding("backup", f"errors:{job}", "medium",
+                    f"Fehler im {job}-Backup (seitdem wieder erfolgreich)",
+                    f"Letzter erfolgreicher Lauf: {last_ok:%d.%m.%Y %H:%M} UTC\n\n{errors_text}")
 
 
 @check("duplicati")
@@ -141,21 +171,25 @@ def duplicati():
         s = json.load(open(os.path.join(DUPLICATI_STATE_DIR, fname), encoding="utf-8"))
         name = s.get("name", fname[:-5])
         last_ok = datetime.fromisoformat(s["last_success"]) if s.get("last_success") else None
+        recent = [f for f in s.get("failures", [])
+                  if NOW - datetime.fromisoformat(f["time"]) < timedelta(days=BACKUP_ERROR_LOOKBACK_D)]
+        lines = [f"{datetime.fromisoformat(f['time']):%d.%m. %H:%M} UTC: {f.get('operation', '?')} "
+                 f"{f.get('result', '?')}" + (f" -- {f['details'][0]}" if f.get("details") else "")
+                 for f in recent[-10:]]
+        # One finding per job, as in backups() (issues #211/#212): failures go into the
+        # no-success finding; separate only when the job has succeeded since.
         if last_ok is None or NOW - last_ok > timedelta(hours=DUPLICATI_MAX_AGE_H):
             since = f"{last_ok:%d.%m.%Y %H:%M} UTC" if last_ok else "nie (seit Beginn der Berichte)"
             finding("backup", f"duplicati:no-success:{name}", "high",
                     f"Kein erfolgreiches Duplicati-Backup „{name}“ in den letzten {DUPLICATI_MAX_AGE_H} h",
                     f"Letzter Erfolg: {since}. Letzter Bericht: {s.get('last_report', '?')} "
-                    f"({s.get('last_operation', '?')} {s.get('last_result', '?')}).")
-        recent = [f for f in s.get("failures", [])
-                  if NOW - datetime.fromisoformat(f["time"]) < timedelta(days=BACKUP_ERROR_LOOKBACK_D)]
-        if recent:
-            lines = [f"{datetime.fromisoformat(f['time']):%d.%m. %H:%M} UTC: {f.get('operation', '?')} "
-                     f"{f.get('result', '?')}" + (f" -- {f['details'][0]}" if f.get("details") else "")
-                     for f in recent[-10:]]
+                    f"({s.get('last_operation', '?')} {s.get('last_result', '?')})."
+                    + ("\n\nFehlschläge:\n" + "\n".join(lines) if lines else ""))
+        elif recent:
             finding("backup", f"duplicati:errors:{name}", "medium",
-                    f"Duplicati „{name}“: {len(recent)} Fehlschlag/Fehlschläge in {BACKUP_ERROR_LOOKBACK_D} Tagen",
-                    "\n".join(lines))
+                    f"Duplicati „{name}“: {len(recent)} Fehlschlag/Fehlschläge in {BACKUP_ERROR_LOOKBACK_D} Tagen "
+                    "(seitdem wieder erfolgreich)",
+                    f"Letzter Erfolg: {last_ok:%d.%m.%Y %H:%M} UTC\n\n" + "\n".join(lines))
 
 
 @check("cert")

@@ -12,10 +12,14 @@ services:
       - --path.procfs=/host/proc
       - --path.sysfs=/host/sys
       - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc|rootfs/var/lib/docker/containers|rootfs/var/lib/docker/overlay2|rootfs/run/docker/netns|rootfs/var/lib/docker/aufs)($|/)
+      # Host scripts report state as *.prom files (e.g. a running off-site backup upload,
+      # read by the outbound-traffic alert). Dir created by the Ansible role backup.
+      - --collector.textfile.directory=/textfile
     volumes:
       - /:/rootfs:ro
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
+      - /var/lib/node_exporter/textfile:/textfile:ro
     # Hardening (#103): runs as nobody and only reads world-readable /proc and /sys
     # files -> no privileged, no capabilities. Read-only root filesystem.
     user: nobody

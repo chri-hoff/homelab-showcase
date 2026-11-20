@@ -90,6 +90,7 @@ services:
         export SECRET_BACKUP_MARIADB_WEBHOOK_KEY=$$(vault_b64 kestra-webhooks backup_mariadb)
         export SECRET_DOCKER_UPDATE_CHECK_WEBHOOK_KEY=$$(vault_b64 kestra-webhooks docker_update_check)
         export SECRET_DAILY_SUMMARY_WEBHOOK_KEY=$$(vault_b64 kestra-webhooks daily_summary)
+        export SECRET_SYSTEM_CHECK_WEBHOOK_KEY=$$(vault_b64 kestra-webhooks system_check)
         export SECRET_CANDIDATE_STATUS_WEBHOOK_KEY=$$(vault_b64 kestra-webhooks candidate_status)
         # Duplicati result reports (send-http), also stored in Duplicati's settings
         export SECRET_DUPLICATI_REPORT_WEBHOOK_KEY=$$(vault_b64 kestra-webhooks duplicati_report)

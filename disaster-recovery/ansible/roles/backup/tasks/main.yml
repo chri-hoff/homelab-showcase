@@ -15,6 +15,16 @@
   loop_control:
     label: "{{ item.name }}"
 
+# node_exporter textfile collector (mounted read-only into nodeexp): host scripts report
+# state here, e.g. a running off-site upload for the outbound-traffic alert (#202).
+- name: Textfile collector directory
+  ansible.builtin.file:
+    path: /var/lib/node_exporter/textfile
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: Log rotation Traefik access log (read by CrowdSec)
   ansible.builtin.copy:
     src: "{{ homelab_repo }}/config/logrotate/traefik"

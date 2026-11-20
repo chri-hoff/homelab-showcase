@@ -15,4 +15,5 @@ tcp 2222   # Gitea SSH
 tcp 1883   # EMQX MQTT
 tcp 8083   # EMQX MQTT over WebSocket
 tcp 8080   # CrowdSec LAPI (Traefik bouncer plugin; firewall allows only localhost + containers)
+tcp 7422   # Crowdsec WAF 
 # NOT expected: tcp 3389 (xrdp) -- disabled and masked (role base) since 2026-11-12

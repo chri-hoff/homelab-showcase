@@ -1,6 +1,24 @@
-# Sustained high outbound traffic on the uplink (possible data exfiltration).
-# for: 15m so that a large backup upload does not fire immediately; adjust the
-# threshold (bytes/s) to the upload bandwidth.
+# Sustained high outbound traffic on the ThinkCentre (possible data exfiltration).
+#
+# Threshold fits the real uplink: ~20 Mbit/s upload (measured 2026-11-16 during the first
+# off-site upload, peak 19.2 Mbit/s). The first version used 20 MB/s (= 160 Mbit/s) and could
+# never fire.
+# Source is cAdvisor's root cgroup (id="/"), which reports the host interfaces. node_exporter
+# runs in its own container network namespace and only sees eth0/lo -- the earlier
+# node_network_transmit_bytes_total{device="eno1"} query never returned any data.
+# Known backup uploads are taken out, otherwise every night (and the multi-day first upload
+# of #202) would alert:
+#   - Duplicati (OneDrive) runs in a container: its cAdvisor TX rate is subtracted.
+#   - The off-site rsync runs on the host: sync_offsite_nextcloud.sh writes
+#     homelab_backup_upload_running=1 via the node_exporter textfile collector while it
+#     transfers. The rule ignores that flag 24 h after the run's start, so a killed run
+#     cannot mute the alert for good.
+# Rate over 15m, not 5m: a real upload (rsync, 2026-11-16) swings between ~0.7 and 5 MB/s
+# within minutes. With a 5m window every dip below the threshold reset the "for" timer, so
+# such an upload would hardly ever fire. The 15m average is ~3 MB/s; for: 10m on top.
+# Limit: eno1 also carries LAN traffic (e.g. Nextcloud clients syncing at home). A large
+# LAN download can fire this rule too -- the description says where to look.
+#
 # Grafana alert rule, provisioning format (Issue #123). One file = one rule = one
 # evaluation group. Templates use {{ .Labels.x }} instead of $labels: provisioning files
 # interpolate $VARIABLES from the environment. .Values only holds reduce/math expressions,
@@ -18,12 +36,20 @@ groups:
           data:
             - refId: A
               relativeTimeRange:
-                from: 600
+                from: 900
                 to: 0
               datasourceUid: bfu5x8zzwhekga
               model:
                 editorMode: code
-                expr: "rate(node_network_transmit_bytes_total{device=\"eno1\"}[5m])"
+                expr: >-
+                  (
+                    rate(container_network_transmit_bytes_total{job="cadvisor",id="/",interface="eno1"}[15m])
+                    - on() group_left()
+                    (sum(rate(container_network_transmit_bytes_total{name="duplicati"}[15m])) or on() vector(0))
+                  )
+                  unless on()
+                  (max(homelab_backup_upload_running
+                       * ((time() - homelab_backup_upload_started_timestamp_seconds) < bool 86400)) == 1)
                 instant: true
                 range: false
                 refId: A
@@ -36,16 +62,16 @@ groups:
                 conditions:
                     - evaluator:
                         params:
-                            - 20000000
+                            - 1250000
                         type: gt
                       type: query
                 refId: C
           noDataState: OK
           execErrState: Error
-          for: 15m
+          for: 10m
           annotations:
-            summary: "Ausgehender Traffic über 20 MB/s auf {{ .Labels.instance }} seit 15 Minuten"
-            description: "Prüfen: welcher Container sendet (Grafana cAdvisor-Dashboard, Netzwerk TX), läuft gerade ein Backup?"
+            summary: "Ausgehender Traffic über 1,25 MB/s (~10 Mbit/s, halber Uplink) auf dem ThinkCentre (eno1) im 15-Minuten-Mittel seit 10 Minuten – kein bekanntes Backup aktiv"
+            description: "Prüfen: welcher Container sendet (Grafana cAdvisor-Dashboard, Netzwerk TX)? Läuft ein Backup ohne Kennzeichnung (/var/lib/node_exporter/textfile)? Großer Download eines Nextcloud-Clients im LAN?"
           isPaused: false
           notification_settings:
             receiver: Telegram

@@ -34,6 +34,7 @@ call, and a run with findings costs a fraction of a cent.
 | Area | Check | Finding when |
 |---|---|---|
 | Containers | state | unhealthy, restart loop, exited (except one-shot sidecars with exit 0) |
+| | Docker socket proxy | still on the live Docker socket? It bind-mounts the socket file, so a recreated socket leaves it on a dead inode – compared host vs. container |
 | Backups | log files on the host | no successful run in 26 h, or any error in the last 8 days |
 | | Duplicati (off-site) | no successful run in 26 h, failures this week, or no reports at all (state from the [`duplicati-report`](../backup/duplicati/duplicati-report.yml) webhook) |
 | Disks | usage, mounts | from 85 % (critical from 95 %), data disk not mounted |

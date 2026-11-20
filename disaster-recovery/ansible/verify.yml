@@ -46,6 +46,14 @@
       changed_when: false
       failed_when: verify_docker.stdout != 'true json-file'
 
+    # Drop-in loaded by systemd (not just present on disk): reconnects docker-socket-proxy
+    # after every Docker start (outage 2026-11-17)
+    - name: Docker start reconnects docker-socket-proxy
+      ansible.builtin.command: systemctl show docker -p ExecStartPost --value  # noqa: command-instead-of-module
+      register: verify_proxy_reconnect
+      changed_when: false
+      failed_when: "'docker-socket-proxy' not in verify_proxy_reconnect.stdout"
+
     - name: Host firewall table loaded
       ansible.builtin.command: nft list set inet host-firewall admin_v4
       register: verify_nft

@@ -78,4 +78,9 @@ Requirements:
   (Vaultwarden plus paper).
 - Not covered yet: losing the data disks together with the host (no offsite copy of the
   Nextcloud data), and Nextcloud's data in the test (the VM starts it without data).
+  *Update 2026-11-20 (#202):* the Nextcloud Borg repository is now mirrored nightly to a Hetzner
+  Storage Box (rsync, provider-side snapshots against a mirrored deletion), and a restore
+  directly from the box over SFTP was tested (`docs/runbooks/offsite-storagebox.md`). With the
+  Docker repository, database dumps and Vault snapshots already off-site via Duplicati, losing
+  host and data disks together is covered. Still open: Nextcloud's data in the VM test.
 - The restore test runs every six months and after larger changes to the host layer.

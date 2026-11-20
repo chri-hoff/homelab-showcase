@@ -1,4 +1,10 @@
 ---
+# Listed first: handlers run in the order they are defined, so a changed drop-in is
+# loaded before a docker restart triggered in the same run.
+- name: Reload systemd
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
 - name: Restart docker
   ansible.builtin.systemd_service:
     name: docker

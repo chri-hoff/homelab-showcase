@@ -1,7 +1,8 @@
 # Backup
 
 Scripted, consistent backups where a file copy would not be enough (Nextcloud with Borg, the
-Postgres instances, Vault in `secrets-vault/`), and Duplicati to take everything off-site.
+Postgres instances, Vault in `secrets-vault/`), Duplicati to take the smaller backups off-site,
+and a mirror of the Nextcloud repository on a storage box with provider-side snapshots.
 
 ## Nextcloud with Borg (`nextcloud-borg/`)
 
@@ -48,6 +49,37 @@ flowchart LR
   ships to Loki (see `observability/`), so backup results show up in Grafana. Tailing the log
   file directly would not work reliably: it is reset at the start of each run and trimmed by
   replacing it.
+
+## Nextcloud off-site: storage box mirror (`offsite/`)
+
+The Nextcloud repository (about 600 GB) was the one backup without an off-site copy.
+`sync_offsite_nextcloud.sh` mirrors it every night to a Hetzner Storage Box over SSH;
+[`offsite-storagebox.md`](offsite/offsite-storagebox.md) is the runbook.
+
+- **A mirror, protected by snapshots it cannot touch.** rsync with `--delete` faithfully
+  copies a broken or encrypted repository too. The storage box takes daily snapshots that
+  can only be managed in the provider's console, not over SSH, so a compromised host cannot
+  delete them. Its SSH key belongs to a sub-account restricted to one directory.
+- **Never copies a repository Borg is writing to:** it takes the same lock as the backup.
+- **Two passes:** new data objects first, then metadata and deletions. An interrupted run
+  never leaves archives that point to chunks the copy does not have yet. A dry run at the end
+  must find no difference between local and remote.
+- **Encrypted before it leaves the host** (Borg `repokey`); the sync itself needs no passphrase.
+- **Multi-night first upload.** The uplink turned out to be about 20 Mbit/s, not the 100 I
+  had assumed, so the first 600 GB took most of a week. Each run stops after a time limit so the
+  next night's backup gets its lock, and continues where it stopped. Until a run completes,
+  the [weekly system check](../system-checks/) keeps reporting it.
+- **Restore tested directly from the box.** Borg 2 reads the mirror over SFTP and fetches only
+  the chunks it needs, so a spot check does not need 600 GB of scratch space. Two traps found
+  on the way, both in the runbook: the SFTP backend needs `paramiko`, which the Debian package
+  does not pull in, and reading the mirror with root's normal Borg settings records the new
+  location, which would have made the next nightly backup abort. The test uses its own
+  `BORG_BASE_DIR`.
+- **The upload exposed a dead alert.** The rule for unusual outbound traffic had a threshold
+  of 160 Mbit/s and read a metric that never had data (the node exporter runs in its own
+  network namespace). Now it reads the host interface from cAdvisor, uses the real uplink,
+  averages over 15 minutes and leaves out known backup uploads: the sync script flags itself
+  through the node exporter's textfile collector while it transfers.
 
 ## Postgres (`postgres/`)
 

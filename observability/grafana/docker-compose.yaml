@@ -60,6 +60,10 @@ services:
       # Alert rules as code (#123): versioned in the repo, loaded at startup, read-only
       # in the UI. Mounted over the alerting subdirectory of the host provisioning dir.
       - ./provisioning/alerting:/etc/grafana/provisioning/alerting:ro
+      # Dashboards as code: provider as a single file (keeps host-side providers), the
+      # JSON files themselves from services/grafana/dashboards/.
+      - ./provisioning/dashboards/homelab.yaml:/etc/grafana/provisioning/dashboards/homelab.yaml:ro
+      - ./dashboards:/etc/grafana/dashboards-repo:ro
 
     labels:
       - traefik.enable=true
